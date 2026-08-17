@@ -1,2 +1,0 @@
-# wrangler.toml – for Cloudflare Pages
-pages_build_output_dir = "."
