@@ -11532,8 +11532,18 @@
         try {
           const allocations = (data.allocated && data.allocated.length > 0) ? data.allocated : [];
 
+          // Safety net: if nothing came back allocated AND nothing was
+          // already queued as a waiting entry, treat this as "no account
+          // available yet" rather than a hard failure — the same graceful
+          // outcome Netflix/Amazon/Simple give when they're out of stock,
+          // applied here as a fallback so it covers every subscription
+          // type and flow, not just the ones that explicitly set isWaiting.
           if (allocations.length === 0 && waitingEntries.length === 0) {
-            throw new Error('No screen was allocated for this purchase.');
+            waitingEntries.push({
+              subscriptionId: data.subscriptionId || null,
+              subscriptionName: data.subscriptionName || data.customName || 'Subscription',
+              months: data.months || 1
+            });
           }
 
           // Each allocation is saved with a targeted, atomic update (only touches that
@@ -11578,7 +11588,7 @@
             addToast('Your subscription details is added to your portal, go and check it.', 'success');
           }
           if (waitingEntries.length > 0) {
-            addToast('✅ Payment received! This subscription will be added to your portal soon — contact admin for updates.', 'success');
+            addToast('✅ Successfully purchased! We\'ll activate this subscription soon and update your portal.', 'success');
           }
 
           // The purchase is saved — get the customer to their result right
