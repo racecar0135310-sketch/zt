@@ -2259,10 +2259,33 @@ app.delete('/api/promotions/:id', requireAccess('promotions', 'delete'), async (
 // Either way, nothing is auto-removed: the admin sees it here until they
 // manually mark it fulfilled once the account has been created and given
 // to the customer.
-app.get('/api/waiting', requireAccess('waiting'), async (req, res) => {
+app.get('/api/waiting', async (req, res) => {
   try {
-    const list = await waitingCollection.find({}).sort({ createdAt: -1 }).toArray();
-    res.json(list);
+    const { username } = req.query;
+    if (username) {
+      // Customer-facing fetch — so their own portal can show "this is
+      // still pending" for anything of theirs waiting on the admin to add
+      // an account. Only their own entries, and only once they've verified
+      // that this is actually them (or the admin looking on their behalf).
+      const auth = getAuth(req);
+      if (!auth || (auth.r !== 'admin' && auth.u !== username)) return res.json([]);
+      const list = await waitingCollection.find({ username, fulfilled: { $ne: true } }).sort({ createdAt: -1 }).toArray();
+      return res.json(list);
+    }
+    // No username → the admin's full list, same access check as before.
+    const auth = getAuth(req);
+    if (!auth) return res.status(401).json({ error: 'Login required' });
+    if (auth.r === 'admin') {
+      const list = await waitingCollection.find({}).sort({ createdAt: -1 }).toArray();
+      return res.json(list);
+    }
+    if (auth.r === 'manager') {
+      const ok = await managerHasAccess(auth.u, 'waiting');
+      if (!ok) return res.status(403).json({ error: 'You do not have permission for this action' });
+      const list = await waitingCollection.find({}).sort({ createdAt: -1 }).toArray();
+      return res.json(list);
+    }
+    return res.status(401).json({ error: 'Admin login required' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

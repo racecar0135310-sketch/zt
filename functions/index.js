@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { MongoClient } = require('mongodb');
 const functions = require('firebase-functions');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 
 const app = express();
 
@@ -29,17 +30,25 @@ app.use((req, res, next) => {
 // A traditional server connects once at boot before app.listen(). A Cloud
 // Function has no equivalent boot step — each cold start needs its own
 // connection, and a warm instance should reuse the one it already made.
-// This caches the connect+seed+cleanup promise so every request during a
-// cold start awaits the SAME in-flight attempt instead of racing to open
+// This caches the connect+seed promise so every request during a cold
+// start awaits the SAME in-flight attempt instead of racing to open
 // several connections at once. connectDB/seedData/cleanupExpiredCustomers
 // are declared further down as function declarations, which are hoisted,
 // so they're safely callable from here.
+//
+// IMPORTANT: cleanupExpiredCustomers() deliberately does NOT run here.
+// The admin portal's "screen blinks until you regenerate the PIN"
+// reminder only works if an expired customer stays in the database for a
+// while after expiring — see screenNeedsReset() in index.html. Running
+// cleanup on every cold start (as this used to) deletes that customer
+// almost immediately, so the blink never has a chance to show. Cleanup
+// instead runs on a real hourly clock via the scheduled function near the
+// bottom of this file, independent of request traffic.
 let readyPromise = null;
 function ensureReady() {
   if (!readyPromise) {
     readyPromise = connectDB()
       .then(() => seedData())
-      .then(() => cleanupExpiredCustomers())
       .catch(err => {
         readyPromise = null; // let the next request retry instead of staying broken forever
         throw err;
@@ -3083,13 +3092,17 @@ async function cleanupExpiredCustomers() {
 // serves index.html for non-API routes before the request ever reaches
 // this function. Only /api/** is routed here.
 
-// Note: the old setInterval(cleanupExpiredCustomers, ...) doesn't fit a
-// serverless model — instances are created and recycled on demand, so
-// there's no long-lived process for setInterval to run in. It now runs
-// once per cold start instead (see ensureReady() above). For a guaranteed
-// periodic sweep regardless of traffic, add a separate scheduled Cloud
-// Function (functions.scheduler.onSchedule) that calls the same cleanup —
-// ask if you'd like that added.
+// ─── SCHEDULED CLEANUP ──────────────────────────────────────
+// Runs on a real hourly clock, independent of request traffic or cold
+// starts — this is what the admin portal's "screen keeps blinking until
+// you regenerate the PIN" reminder (screenNeedsReset() in index.html) was
+// originally built around. Deploying this requires the Blaze (pay-as-you-go)
+// plan, which this project is already on since Cloud Functions on the free
+// Spark plan can't make outbound requests to MongoDB Atlas at all.
+exports.cleanupExpiredCustomersScheduled = onSchedule('every 60 minutes', async () => {
+  await ensureReady();
+  await cleanupExpiredCustomers();
+});
 
 // ─── EXPORT AS FIREBASE CLOUD FUNCTION ──────────────────────
 exports.api = functions.https.onRequest(app);
