@@ -1097,12 +1097,22 @@ app.post('/api/subscriptions/:id/allocate', async (req, res) => {
     if (result.matchedCount === 0) {
       return res.status(404).json({ error: 'Subscription, account, or screen not found' });
     }
+    if (result.modifiedCount === 0) {
+      // The subscription doc matched, but the specific account/screen id
+      // inside it didn't (e.g. the admin removed or changed it after this
+      // customer's page loaded) — nothing was actually saved even though
+      // matchedCount looked fine. Surface this as a real failure so the
+      // customer gracefully lands on the waiting list instead of the
+      // purchase silently vanishing.
+      return res.status(409).json({ error: 'That account/screen is no longer available — please try again' });
+    }
     const updated = await subscriptionsCollection.findOne({ id: req.params.id });
     res.json({
       ...maskSubscriptionForViewer(updated, auth),
       claimedCredentials: maySeeCreds ? slotCredentials(updated, accountId, screenId) : BLANK_CREDENTIALS
     });
   } catch (err) {
+    console.error('POST /api/subscriptions/:id/allocate failed:', err.message, JSON.stringify(req.body));
     res.status(500).json({ error: err.message });
   }
 });
@@ -2305,8 +2315,9 @@ app.post('/api/waiting', async (req, res) => {
       isSocialOrder, platformId, platformName, serviceId, serviceName,
       quantity, linkType, linkValue, price
     } = req.body;
-    if (!subscriptionName || !name || !whatsapp) {
-      return res.status(400).json({ error: 'subscriptionName, name and whatsapp are required' });
+    if (!subscriptionName || !username || !whatsapp) {
+      console.error('POST /api/waiting rejected (missing field):', JSON.stringify(req.body));
+      return res.status(400).json({ error: 'subscriptionName, username and whatsapp are required' });
     }
 
     // Same waiting-request submitted twice? Don't add a duplicate entry.
@@ -2321,7 +2332,7 @@ app.post('/api/waiting', async (req, res) => {
       subscriptionId: subscriptionId || null,
       subscriptionName,
       isCustomRequest: !!isCustomRequest,
-      name,
+      name: name || username,
       username: username || '',
       whatsapp,
       months: months || 1,

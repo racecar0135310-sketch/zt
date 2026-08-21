@@ -1269,7 +1269,7 @@
     // Holds services a customer picked whose total is still under the
     // Rs 300 minimum order — they keep adding until checkout clears it.
     const fetchSocialCart = async (username) => {
-      const res = await fetch(`${API_BASE}/api/social-cart/${encodeURIComponent(username)}?t=${Date.now()}`, {
+      const res = await fetch(`${API_BASE}/api/cart/${encodeURIComponent(username)}?t=${Date.now()}`, {
         headers: authHeaders({ 'Cache-Control': 'no-cache' })
       });
       if (!res.ok) throw new Error('Failed to load your cart');
@@ -1277,7 +1277,7 @@
     };
 
     const addToSocialCart = async (data) => {
-      const res = await fetch(`${API_BASE}/api/social-cart`, {
+      const res = await fetch(`${API_BASE}/api/cart`, {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(data),
@@ -1287,15 +1287,15 @@
       return json;
     };
 
-    const removeFromSocialCart = async (itemId) => {
-      const res = await fetch(`${API_BASE}/api/social-cart/${itemId}`, { method: 'DELETE', headers: authHeaders() });
+    const removeFromSocialCart = async (username, itemId) => {
+      const res = await fetch(`${API_BASE}/api/cart/${encodeURIComponent(username)}/${itemId}`, { method: 'DELETE', headers: authHeaders() });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || json.error) throw new Error(json.error || 'Failed to remove item');
       return json;
     };
 
     const checkoutSocialCart = async (username, data) => {
-      const res = await fetch(`${API_BASE}/api/social-cart/${encodeURIComponent(username)}/checkout`, {
+      const res = await fetch(`${API_BASE}/api/cart/${encodeURIComponent(username)}/checkout`, {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(data),
@@ -3593,11 +3593,9 @@
             platformName: platform.name,
             serviceId: selectedService.id,
             serviceName: selectedService.name,
-            variationId: selectedVariation ? selectedVariation.id : '',
-            variationName: selectedVariation ? selectedVariation.name : '',
             quantity: qtyNum,
-            linkType: needsAccountLink ? 'accountLink' : (needsVideoLink ? 'videoLink' : ''),
-            linkValue: needsAccountLink ? accountLink.trim() : (needsVideoLink ? videoLink.trim() : ''),
+            accountLink: needsAccountLink ? accountLink.trim() : '',
+            videoLink: needsVideoLink ? videoLink.trim() : '',
             price
           });
           if (onCartChanged) onCartChanged();
@@ -4427,7 +4425,7 @@
                 <p className="text-yellow-400 text-sm"><i className="fas fa-exclamation-circle mr-2"></i> Please log in to purchase with credits.</p>
               </div>
             )}
-            <button onClick={handlePayWithCredits} disabled={loading || (!!currentUser && !canUseCredits)} className="btn-neon w-full py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed">
+            <button onClick={handlePayWithCredits} disabled={loading || !currentUser || !canUseCredits} className="btn-neon w-full py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed">
               {loading ? <span className="spinner"></span> : <><i className="fas fa-coins mr-2"></i> Pay with Credits</>}
             </button>
           </div>
@@ -4627,7 +4625,7 @@
                 <p className="text-yellow-400 text-sm"><i className="fas fa-exclamation-circle mr-2"></i> Please log in to purchase with credits.</p>
               </div>
             )}
-            <button onClick={handlePayWithCredits} disabled={loading || (!!currentUser && !canUseCredits)} className="btn-neon w-full py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed">
+            <button onClick={handlePayWithCredits} disabled={loading || !currentUser || !canUseCredits} className="btn-neon w-full py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed">
               {loading ? <span className="spinner"></span> : <><i className="fas fa-coins mr-2"></i> Pay with Credits</>}
             </button>
           </div>
@@ -4879,7 +4877,7 @@
     }
 
     // ─── DEAL PURCHASE FLOW ──────────────────────────────────
-    function DealPurchaseFlow({ deal, subscriptions, onBack, onComplete, user }) {
+    function DealPurchaseFlow({ deal, subscriptions, onBack, onComplete, user, requireAuth }) {
       const [step, setStep] = useState('plan');
       const [whatsapp, setWhatsapp] = useState(user?.whatsapp || '');
       const [loading, setLoading] = useState(false);
@@ -5116,7 +5114,7 @@
                 <p className="text-yellow-400 text-sm"><i className="fas fa-exclamation-circle mr-2"></i> Please log in to purchase with credits.</p>
               </div>
             )}
-            <button onClick={handlePayWithCredits} disabled={loading || (!!currentUser && !canUseCredits)} className="btn-neon w-full py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed">
+            <button onClick={handlePayWithCredits} disabled={loading || !currentUser || !canUseCredits} className="btn-neon w-full py-3 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed">
               {loading ? <span className="spinner"></span> : <><i className="fas fa-coins mr-2"></i> Pay with Credits</>}
             </button>
           </div>
@@ -5775,7 +5773,13 @@
       // subscription (e.g. two Netflix screens) land in the same folder.
       const subscriptionFolders = useMemo(() => {
         const map = {};
-        activeEntries.forEach(entry => {
+        // Pending entries are folded in right alongside the real ones here
+        // — a still-pending purchase shows up as a folder card exactly
+        // like Netflix/Amazon Prime does, and only reveals the "we're
+        // setting this up" message once the customer actually opens it.
+        // Once the admin fulfills it, this same folder just starts
+        // showing full account details instead — nothing else changes.
+        [...activeEntries, ...pendingEntries].forEach(entry => {
           const key = entry.subscriptionName || 'Other';
           if (!map[key]) {
             const matchingSub = (subscriptions || []).find(s => s.id === entry.subscriptionId);
@@ -5784,7 +5788,7 @@
           map[key].entries.push(entry);
         });
         return Object.values(map);
-      }, [activeEntries, subscriptions]);
+      }, [activeEntries, pendingEntries, subscriptions]);
 
       const folderStatus = (folder) => {
         // Worst status among the folder's entries wins, so a folder with
@@ -5811,26 +5815,9 @@
         );
       };
 
-      const renderPendingSection = () => {
-        if (pendingEntries.length === 0) return null;
-        return (
-          <div className="max-w-4xl mx-auto space-y-2">
-            {pendingEntries.map((entry, i) => (
-              <div key={i} className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/20 flex items-start gap-3">
-                <i className="fas fa-clock text-yellow-400 mt-0.5"></i>
-                <div className="min-w-0">
-                  <p className="text-yellow-400 text-sm font-medium">{entry.subscriptionName} — pending</p>
-                  <p className="text-white/50 text-xs mt-1">Payment received! We're setting this one up for you and it'll appear here automatically as soon as it's ready — usually quick, but message us on WhatsApp if it's been a while.</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        );
-      };
-
       const hadAnyRealEntries = (localCustomerData || []).some(e => !e.isPending);
 
-      if (!hadAnyRealEntries) {
+      if (subscriptionFolders.length === 0) {
         return (
           <div className="space-y-6">
             {renderDealsSection()}
@@ -5839,7 +5826,6 @@
               <button onClick={promptForReview} className="text-yellow-400 hover:text-yellow-300 text-sm font-medium inline-flex items-center gap-2"><i className="fas fa-star"></i> Give us a Review</button>
             </div>
             <NotesBoard username={user?.username} />
-            {renderPendingSection()}
             {renderSocialHistorySection()}
             <div className="glass-panel max-w-4xl mx-auto">
               <div className="mb-6">
@@ -5850,41 +5836,19 @@
                 </button>
                 <CreditHistoryModal open={showCreditHistory} onClose={() => setShowCreditHistory(false)} username={user?.username} />
               </div>
-              <div className="text-center py-8 text-white/40">
-                <i className="fas fa-inbox text-4xl mb-3 block"></i>
-                <p>You have no active subscriptions.</p>
-                <p className="text-sm mt-2">Check out the deals above or browse subscriptions!</p>
-              </div>
-            </div>
-          </div>
-        );
-      }
-
-      if (activeEntries.length === 0) {
-        return (
-          <div className="space-y-6">
-            {renderDealsSection()}
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <button onClick={onBack} className="text-red-400 hover:text-red-300 font-bold text-base inline-flex items-center"><i className="fas fa-arrow-left mr-2"></i> Back</button>
-              <button onClick={promptForReview} className="text-yellow-400 hover:text-yellow-300 text-sm font-medium inline-flex items-center gap-2"><i className="fas fa-star"></i> Give us a Review</button>
-            </div>
-            <NotesBoard username={user?.username} />
-            {renderPendingSection()}
-            {renderSocialHistorySection()}
-            <div className="glass-panel max-w-4xl mx-auto">
-              <div className="mb-6">
-                <h2 className="text-2xl font-bold text-white"><span className="brand-z brand-z-sm">Z</span> {displayName}</h2>
-                <p className="text-white/30 text-sm"><i className="fab fa-whatsapp mr-1"></i> {displayWhatsapp}</p>
-                <button onClick={() => setShowCreditHistory(true)} className="text-white/30 text-sm hover:text-red-400 transition inline-flex items-center gap-1">
-                  <i className="fas fa-coins mr-1"></i> Credits: {userCredits} <i className="fas fa-chevron-right text-[10px] ml-1 opacity-60"></i>
-                </button>
-                <CreditHistoryModal open={showCreditHistory} onClose={() => setShowCreditHistory(false)} username={user?.username} />
-              </div>
-              <div className="text-center py-8 text-white/40">
-                <i className="fas fa-exclamation-circle text-4xl text-yellow-400 mb-3 block"></i>
-                <p>Your subscriptions have expired. Please renew to regain access.</p>
-                <p className="text-sm mt-2">Check out the deals above!</p>
-              </div>
+              {hadAnyRealEntries ? (
+                <div className="text-center py-8 text-white/40">
+                  <i className="fas fa-exclamation-circle text-4xl text-yellow-400 mb-3 block"></i>
+                  <p>Your subscriptions have expired. Please renew to regain access.</p>
+                  <p className="text-sm mt-2">Check out the deals above!</p>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-white/40">
+                  <i className="fas fa-inbox text-4xl mb-3 block"></i>
+                  <p>You have no active subscriptions.</p>
+                  <p className="text-sm mt-2">Check out the deals above or browse subscriptions!</p>
+                </div>
+              )}
             </div>
           </div>
         );
@@ -5898,7 +5862,6 @@
             <button onClick={promptForReview} className="text-yellow-400 hover:text-yellow-300 text-sm font-medium inline-flex items-center gap-2"><i className="fas fa-star"></i> Give us a Review</button>
           </div>
           <NotesBoard username={user?.username} />
-          {renderPendingSection()}
           {renderSocialHistorySection()}
           <div className="glass-panel max-w-4xl mx-auto">
             <div className="mb-6">
@@ -5946,6 +5909,27 @@
                       <div className="overflow-hidden">
                         <div className="px-4 pb-4 space-y-4">
                           {folder.entries.map((entry, idx) => {
+                            // Still-pending (paid, no account assigned yet) —
+                            // this is the only thing that changes: the same
+                            // folder card the customer already opened just
+                            // shows this "we're setting it up" message
+                            // instead of the credentials grid below. It's
+                            // never shown until they click the folder open,
+                            // and it switches to the real details on its own
+                            // the moment the admin fulfills it (fetchMyWaiting
+                            // stops returning it, so it becomes a normal
+                            // entry the very next background refresh).
+                            if (entry.isPending) {
+                              return (
+                                <div key={idx} className="bg-black/20 rounded-xl p-4 border border-yellow-500/10 flex items-start gap-3">
+                                  <i className="fas fa-clock text-yellow-400 mt-0.5"></i>
+                                  <div className="min-w-0">
+                                    <p className="text-yellow-400 text-sm font-medium">Pending — we're setting this up</p>
+                                    <p className="text-white/50 text-xs mt-1">Payment received! We're setting this one up for you and it'll appear here automatically as soon as it's ready — usually quick, but message us on WhatsApp if it's been a while.</p>
+                                  </div>
+                                </div>
+                              );
+                            }
                             const status = getStatus(entry.expiryDate);
                             const entryExpiring = status.label === 'Expires Today' || status.label === 'Expires Tomorrow';
                             return (
@@ -11497,6 +11481,17 @@
       };
 
       const handleSubComplete = async (data) => {
+        // Whatever flow got us here always requires being logged in before
+        // payment, so `user` is the source of truth for who's buying —
+        // fall back to it if a particular flow's payload ever came through
+        // without username/whatsapp. This is what the "waiting customer"
+        // save needs to succeed; without it, the purchase looks like it
+        // went through but silently fails to record anywhere.
+        data = { ...data, username: data.username || user?.username, whatsapp: data.whatsapp || user?.whatsapp };
+        if (!data.username || !data.whatsapp) {
+          addToast('Please log in and try the purchase again.', 'error');
+          return;
+        }
         const customerPayload = {
           name: data.name || '',
           username: data.username,
@@ -11552,34 +11547,65 @@
           // They touch different accounts/screens, so it's safe to save them all at
           // once instead of one-by-one — this is the only step the customer actually
           // has to wait on, so keeping it fast matters most here.
+          //
+          // Credits are already spent by the time we get here, so a failure on this
+          // specific step must NEVER surface as a scary "contact support" error —
+          // whatever the cause, it gracefully falls back to the same "we'll activate
+          // it soon" waiting-list outcome Netflix/Amazon/Simple already give when no
+          // account is available, instead of failing the whole purchase.
           await Promise.all(allocations.map(async (allot) => {
-            const subIdForAllot = allot.subscriptionId || data.subscriptionId;
-            const resp = await allocateCustomer(subIdForAllot, allot.accountId, allot.screenId, customerPayload, data.purchaseId);
-            // The server returns the real credentials for the slot we just
-            // purchased. Use them so the confirmation screen shows the actual
-            // email/password/PIN — the full master list is now hidden from
-            // the browser, so we can't read them from there anymore.
-            const creds = resp && resp.claimedCredentials;
-            if (creds) {
-              if (creds.email) allot.accountEmail = creds.email;
-              if (creds.password) allot.accountPassword = creds.password;
-              if (creds.pin) allot.screenPin = creds.pin;
+            try {
+              if (!allot.accountId || !allot.screenId) throw new Error('Missing account/screen id');
+              const subIdForAllot = allot.subscriptionId || data.subscriptionId;
+              const resp = await allocateCustomer(subIdForAllot, allot.accountId, allot.screenId, customerPayload, data.purchaseId);
+              // The server returns the real credentials for the slot we just
+              // purchased. Use them so the confirmation screen shows the actual
+              // email/password/PIN — the full master list is now hidden from
+              // the browser, so we can't read them from there anymore.
+              const creds = resp && resp.claimedCredentials;
+              if (creds) {
+                if (creds.email) allot.accountEmail = creds.email;
+                if (creds.password) allot.accountPassword = creds.password;
+                if (creds.pin) allot.screenPin = creds.pin;
+              }
+            } catch (err) {
+              console.error('Allocation failed, falling back to waiting list:', err);
+              allot.__failed = true;
+              waitingEntries.push({
+                subscriptionId: allot.subscriptionId || data.subscriptionId || null,
+                subscriptionName: allot.subscriptionName || data.subscriptionName || data.customName || 'Subscription',
+                months: data.months || 1
+              });
             }
           }));
+          // Drop anything that failed to allocate from the "real credentials"
+          // list — it's now represented as a waiting entry instead.
+          const failedCount = allocations.filter(a => a.__failed).length;
+          if (failedCount > 0) {
+            allocations.splice(0, allocations.length, ...allocations.filter(a => !a.__failed));
+          }
 
-          await Promise.all(waitingEntries.map(entry => addWaitingCustomer({
-            subscriptionId: entry.subscriptionId,
-            subscriptionName: entry.subscriptionName,
-            isCustomRequest: false,
-            name: data.name || '',
-            username: data.username,
-            whatsapp: data.whatsapp,
-            months: entry.months,
-            email: data.email || '',
-            paidWithCredits: !!data.paidWithCredits,
-            purchaseId: data.purchaseId,
-            purchasedAt: data.purchasedAt || new Date().toISOString()
-          })));
+          await Promise.all(waitingEntries.map(async entry => {
+            const payload = {
+              subscriptionId: entry.subscriptionId,
+              subscriptionName: entry.subscriptionName,
+              isCustomRequest: false,
+              name: data.name || '',
+              username: data.username,
+              whatsapp: data.whatsapp,
+              months: entry.months,
+              email: data.email || '',
+              paidWithCredits: !!data.paidWithCredits,
+              purchaseId: data.purchaseId,
+              purchasedAt: data.purchasedAt || new Date().toISOString()
+            };
+            try {
+              return await addWaitingCustomer(payload);
+            } catch (err) {
+              console.error('Waiting-list save failed, retrying once:', err);
+              return await addWaitingCustomer(payload);
+            }
+          }));
 
           resetFlow();
 
@@ -11682,7 +11708,7 @@
       const handleRemoveFromCart = async (itemId) => {
         setSocialCartRemovingId(itemId);
         try {
-          await removeFromSocialCart(itemId);
+          await removeFromSocialCart(user.username, itemId);
           setSocialCartItems(prev => prev.filter(it => it.id !== itemId));
         } catch (err) {
           addToast('Failed to remove item: ' + (err?.message || 'unknown error'), 'error');
@@ -11711,7 +11737,10 @@
 
       const renderFlow = () => {
         if (selectedDeal && flowStep === 'deal-purchase') {
-          return <DealPurchaseFlow deal={selectedDeal} subscriptions={subscriptions} onBack={() => { setFlowStep('select'); setSelectedDeal(null); }} onComplete={handleSubComplete} user={user} />;
+          return <DealPurchaseFlow deal={selectedDeal} subscriptions={subscriptions} onBack={() => { setFlowStep('select'); setSelectedDeal(null); }} onComplete={handleSubComplete} user={user} requireAuth={() => {
+            addToast('Please sign up or login first to complete your purchase.', 'info');
+            setFlowStep('auth');
+          }} />;
         }
         if (!selectedSubscription) return null;
         const type = selectedSubscription.type;

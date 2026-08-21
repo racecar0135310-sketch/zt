@@ -2316,8 +2316,9 @@ app.post('/api/waiting', async (req, res) => {
       isSocialOrder, platformId, platformName, serviceId, serviceName,
       quantity, linkType, linkValue, price
     } = req.body;
-    if (!subscriptionName || !name || !whatsapp) {
-      return res.status(400).json({ error: 'subscriptionName, name and whatsapp are required' });
+    if (!subscriptionName || !username || !whatsapp) {
+      console.error('POST /api/waiting rejected (missing field):', JSON.stringify(req.body));
+      return res.status(400).json({ error: 'subscriptionName, username and whatsapp are required' });
     }
 
     // Same waiting-request submitted twice? Don't add a duplicate entry.
@@ -2332,7 +2333,7 @@ app.post('/api/waiting', async (req, res) => {
       subscriptionId: subscriptionId || null,
       subscriptionName,
       isCustomRequest: !!isCustomRequest,
-      name,
+      name: name || username,
       username: username || '',
       whatsapp,
       months: months || 1,
