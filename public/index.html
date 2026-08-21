@@ -11242,13 +11242,23 @@
 
       useEffect(() => {
         const loadData = async (silent = false) => {
+          // Declared here (not inside the try block below) on purpose —
+          // `subs` is read further down, after the try/catch, to keep the
+          // customer's own portal in sync every poll tick. A `const`
+          // declared inside the try block is scoped to that block only;
+          // reading it afterward silently throws a ReferenceError on every
+          // single tick, which was quietly killing that entire refresh
+          // (including pending purchases ever showing up) without any
+          // visible error to the customer.
+          let subs;
           try {
             // Subscriptions/deals/promotions are what the home page and
             // subscription flow actually need, so they're the only things
             // the (rare, cache-empty) loading screen waits on. FAQs are
             // fetched separately below so a slow Help-content fetch never
             // holds up the parts of the page people see first.
-            const [subs, dealsData, promos, socialData] = await Promise.all([fetchSubscriptions(), fetchDeals(), fetchPromotions(), fetchSocialServices().catch(() => [])]);
+            let dealsData, promos, socialData;
+            [subs, dealsData, promos, socialData] = await Promise.all([fetchSubscriptions(), fetchDeals(), fetchPromotions(), fetchSocialServices().catch(() => [])]);
             setSubscriptions(prev => mergeSubscriptions(subs, prev));
             setDeals(dealsData);
             setPromotions(promos);
@@ -11796,9 +11806,21 @@
 
           // Then quietly catch up in the background, in case a purchase
           // was made from another device since this data was last loaded.
-          Promise.all([refreshUser(), fetchSubscriptions(), fetchCustomGrants(user.username).catch(() => []), fetchMyWaiting(user.username).catch(() => [])])
+          // IMPORTANT: every one of these needs its own .catch(). Without
+          // it, Promise.all fails the instant ANY single one of them does
+          // (e.g. one flaky refreshUser() call) — which used to throw away
+          // the OTHER three results too, including a perfectly successful
+          // fetchMyWaiting(). That's what made a pending purchase
+          // intermittently just never show up: the merge below silently
+          // never ran, even though the pending entry itself fetched fine.
+          Promise.all([
+            refreshUser().catch(err => { console.error('Background user refresh failed:', err); return null; }),
+            fetchSubscriptions().catch(err => { console.error('Background subscriptions refresh failed:', err); return null; }),
+            fetchCustomGrants(user.username).catch(() => []),
+            fetchMyWaiting(user.username).catch(() => [])
+          ])
             .then(([, fresh, grants, waiting]) => {
-              setSubscriptions(fresh);
+              if (fresh) setSubscriptions(fresh);
               setCustomerData([...mapWaitingToEntries(waiting), ...findCustomers(user.username, fresh), ...mapCustomGrantsToEntries(grants)]);
             })
             .catch(err => console.error('Background customer portal refresh failed:', err));
