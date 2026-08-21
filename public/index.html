@@ -11631,7 +11631,14 @@
               isPending: true,
               purchasedAt: data.purchasedAt || new Date().toISOString()
             }));
-            setCustomerData([...pendingLocalEntries, ...buildLocalCustomerData(data, allocations)]);
+            // Add the new purchase(s) on top of whatever the customer
+            // already owned — NOT replace it. This used to wipe out every
+            // existing subscription/custom-grant/pending entry from the
+            // portal the instant a new purchase landed, until the next
+            // background refresh quietly brought them back a few seconds
+            // later. Since this is a brand-new purchase, it can't already
+            // be present in `prev`, so nothing extra needs deduping here.
+            setCustomerData(prev => [...pendingLocalEntries, ...buildLocalCustomerData(data, allocations), ...(prev || [])]);
             setFlowStep('customer-dash');
             navigateTo('/subscriptions');
             // Let them land on their portal and actually see their new
@@ -12004,7 +12011,7 @@
                     <p className="text-white/40 mb-8">Choose an option to continue.</p>
                     <div className="flex flex-col items-center gap-4 max-w-md mx-auto">
                       {user ? (
-                        <button onClick={() => { const found = findCustomers(user.username); setCustomerData(found); setFlowStep('customer-dash'); Promise.all([fetchCustomGrants(user.username).catch(() => []), fetchMyWaiting(user.username).catch(() => [])]).then(([grants, waiting]) => setCustomerData([...mapWaitingToEntries(waiting), ...found, ...mapCustomGrantsToEntries(grants)])); }} className="btn-neon-outline w-full px-10 py-4 text-lg"><i className="fas fa-user-circle mr-3"></i> My Dashboard</button>
+                        <button onClick={handleCustomerPortal} className="btn-neon-outline w-full px-10 py-4 text-lg"><i className="fas fa-user-circle mr-3"></i> My Dashboard</button>
                       ) : (
                         <button onClick={() => { setShowAuth(true); setFlowStep('auth'); }} className="btn-neon-outline w-full px-10 py-4 text-lg"><i className="fas fa-user-plus mr-3"></i> Sign Up</button>
                       )}
