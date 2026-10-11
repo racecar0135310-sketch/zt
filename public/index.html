@@ -680,6 +680,13 @@
       try { const v = localStorage.getItem(key); if (v) return v; } catch (e) {}
       try { return sessionStorage.getItem(key); } catch (e) { return null; }
     };
+    // Customer sessions must prefer sessionStorage: it is isolated per tab,
+    // while localStorage is shared and may have been overwritten by another
+    // customer login in a different tab on the same browser.
+    const readCustomerAuthToken = () => {
+      try { const token = sessionStorage.getItem('authToken'); if (token) return token; } catch (e) {}
+      try { return localStorage.getItem('authToken'); } catch (e) { return null; }
+    };
     // Which of the two admin-panel logins THIS browser tab actually used.
     // Deliberately kept in sessionStorage only (never localStorage), because
     // sessionStorage is per-tab while localStorage is shared by every tab on
@@ -716,7 +723,7 @@
       return token ? { ...base, 'Authorization': `Bearer ${token}` } : { ...base };
     };
     const getCustomerAuthHeaders = (base = {}) => {
-      const token = readAuthToken('authToken');
+      const token = readCustomerAuthToken();
       return token ? { ...base, 'Authorization': `Bearer ${token}` } : { ...base };
     };
 
@@ -1091,7 +1098,7 @@
     };
 
     const deductCredits = async (username, amount, purchaseId, reason, priceContext, authMode = 'customer') => {
-      const res = await fetch(`${API_BASE}/api/users/${username}/deductCredits`, {
+      const res = await fetch(`${API_BASE}/api/users/${encodeURIComponent(username)}/deductCredits`, {
         method: 'POST',
         headers: (authMode === 'admin' ? authHeaders : getCustomerAuthHeaders)({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ amount, purchaseId, reason, ...(priceContext || {}) }),
@@ -3511,7 +3518,12 @@
         // was ordered without needing a separate column in older views.
         const fullServiceName = selectedVariation ? `${selectedService.name} - ${selectedVariation.name}` : selectedService.name;
         try {
-          const updatedUser = await deductCredits(user.username, price, purchaseId, `${platform.name} - ${fullServiceName}`, { socialServiceId: selectedService.id });
+          const updatedUser = await deductCredits(user.username, price, purchaseId, `${platform.name} - ${fullServiceName}`, {
+            socialServiceId: selectedService.id,
+            socialPlatformId: platform.id,
+            socialVariationId: selectedVariation?.id || '',
+            quantity: qtyNum
+          });
           setUser(updatedUser);
 
           await addWaitingCustomer({
@@ -3526,6 +3538,7 @@
             platformId: platform.id,
             platformName: platform.name,
             serviceId: selectedService.id,
+            variationId: selectedVariation?.id || '',
             serviceName: fullServiceName,
             quantity: qtyNum,
             linkType: needsAccountLink ? 'accountLink' : (needsVideoLink ? 'videoLink' : ''),
@@ -3592,6 +3605,7 @@
             platformName: platform.name,
             serviceId: selectedService.id,
             serviceName: selectedService.name,
+            variationId: selectedVariation?.id || '',
             quantity: qtyNum,
             accountLink: needsAccountLink ? accountLink.trim() : '',
             videoLink: needsVideoLink ? videoLink.trim() : '',
@@ -9851,7 +9865,7 @@
                                 <td className="text-xs">{g.purchasedAt ? new Date(g.purchasedAt).toLocaleDateString() : 'N/A'}</td>
                                 <td className="text-xs">{g.expiryDate}</td>
                                 <td><span className={`badge ${statusColors[status]}`}>{statusLabels[status]}</span></td>
-                                <td><button onClick={() => deleteCustomGrant(g.id)} className="btn-danger text-xs"><i className="fas fa-trash"></i></button></td>
+                                <td>{can('waiting', 'grant') && <button onClick={() => deleteCustomGrant(g.id)} className="btn-danger text-xs"><i className="fas fa-trash"></i></button>}</td>
                               </tr>
                             );
                           })}

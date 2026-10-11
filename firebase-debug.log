@@ -1,0 +1,131 @@
+[debug] [2026-10-11T13:18:56.731Z] ----------------------------------------------------------------------
+[debug] [2026-10-11T13:18:56.733Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\Hp\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js init
+[debug] [2026-10-11T13:18:56.734Z] CLI Version:   15.33.0
+[debug] [2026-10-11T13:18:56.734Z] Platform:      win32
+[debug] [2026-10-11T13:18:56.734Z] Node Version:  v22.23.2
+[debug] [2026-10-11T13:18:56.734Z] Detected Agent: unknown
+[debug] [2026-10-11T13:18:56.734Z] Time:          Sun Oct 11 2026 18:18:56 GMT+0500 (Pakistan Standard Time)
+[debug] [2026-10-11T13:18:56.735Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-10-11T13:18:56.745Z] >>> [apiv2][query] GET https://firebase-public.firebaseio.com/cli.json [none]
+[info] 
+     ######## #### ########  ######## ########     ###     ######  ########
+     ##        ##  ##     ## ##       ##     ##  ##   ##  ##       ##
+     ######    ##  ########  ######   ########  #########  ######  ######
+     ##        ##  ##    ##  ##       ##     ## ##     ##       ## ##
+     ##       #### ##     ## ######## ########  ##     ##  ######  ########
+
+You're about to initialize a Firebase project in this directory:
+
+  E:\backup\zt
+
+Before we get started, keep in mind:
+
+  * You are initializing within an existing Firebase project directory
+
+[debug] [2026-10-11T13:18:58.895Z] <<< [apiv2][status] GET https://firebase-public.firebaseio.com/cli.json 200
+[debug] [2026-10-11T13:18:58.896Z] <<< [apiv2][body] GET https://firebase-public.firebaseio.com/cli.json {"cloudBuildErrorAfter":1594252800000,"cloudBuildWarnAfter":1590019200000,"defaultNode10After":1594252800000,"minVersion":"3.0.5","node8DeploysDisabledAfter":1613390400000,"node8RuntimeDisabledAfter":1615809600000,"node8WarnAfter":1600128000000}
+[info] 
+=== Project Setup
+[info] 
+[info] First, let's associate this project directory with a Firebase project.
+[info] You can create multiple project aliases by running firebase use --add, 
+[info] 
+[debug] [2026-10-11T13:19:37.819Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-10-11T13:19:37.819Z] > authorizing via signed-in user (uniwritessss@gmail.com)
+[debug] [2026-10-11T13:19:37.820Z] Checked if tokens are valid: false, expires at: 1789389277029
+[debug] [2026-10-11T13:19:37.820Z] Checked if tokens are valid: false, expires at: 1789389277029
+[debug] [2026-10-11T13:19:37.820Z] > refreshing access token with scopes: []
+[debug] [2026-10-11T13:19:37.822Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-10-11T13:19:37.822Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-10-11T13:19:38.297Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 200
+[debug] [2026-10-11T13:19:38.298Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-10-11T13:19:38.306Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/zetlify-app [none]
+[debug] [2026-10-11T13:19:38.963Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/zetlify-app 200
+[debug] [2026-10-11T13:19:38.963Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/zetlify-app {"projectId":"zetlify-app","projectNumber":"739771507455","displayName":"zetlify-app","name":"projects/zetlify-app","resources":{"hostingSite":"zetlify-app"},"state":"ACTIVE","labels":{"firebase":"enabled"},"etag":"1_94a1ede8-d94d-483e-a566-b5725ad9fe01"}
+[info] i  Using project zetlify-app (zetlify-app) . 
+[info] 
+=== App Hosting Setup
+[debug] [2026-10-11T13:19:38.970Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:38.970Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:38.970Z] >>> [apiv2][query] GET https://cloudbilling.googleapis.com/v1/projects/zetlify-app/billingInfo [none]
+[debug] [2026-10-11T13:19:38.970Z] >>> [apiv2][(partial)header] GET https://cloudbilling.googleapis.com/v1/projects/zetlify-app/billingInfo  x-goog-user-project=zetlify-app
+[debug] [2026-10-11T13:19:39.931Z] <<< [apiv2][status] GET https://cloudbilling.googleapis.com/v1/projects/zetlify-app/billingInfo 200
+[debug] [2026-10-11T13:19:39.931Z] <<< [apiv2][body] GET https://cloudbilling.googleapis.com/v1/projects/zetlify-app/billingInfo {"name":"projects/zetlify-app/billingInfo","projectId":"zetlify-app","billingAccountName":"billingAccounts/010089-52721E-C33BD3","billingEnabled":true}
+[debug] [2026-10-11T13:19:39.931Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:39.931Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:39.932Z] >>> [apiv2][query] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/firebaseapphosting.googleapis.com [none]
+[debug] [2026-10-11T13:19:39.932Z] >>> [apiv2][(partial)header] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/firebaseapphosting.googleapis.com  x-goog-user-project=zetlify-app
+[debug] [2026-10-11T13:19:41.685Z] <<< [apiv2][status] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/firebaseapphosting.googleapis.com 200
+[debug] [2026-10-11T13:19:41.685Z] <<< [apiv2][body] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/firebaseapphosting.googleapis.com [omitted]
+[debug] [2026-10-11T13:19:41.685Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:41.686Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:41.686Z] >>> [apiv2][query] POST https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/firebaseapphosting.googleapis.com:enable [none]
+[debug] [2026-10-11T13:19:41.686Z] >>> [apiv2][(partial)header] POST https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/firebaseapphosting.googleapis.com:enable  x-goog-user-project=zetlify-app
+[debug] [2026-10-11T13:19:43.515Z] <<< [apiv2][status] POST https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/firebaseapphosting.googleapis.com:enable 200
+[debug] [2026-10-11T13:19:43.515Z] <<< [apiv2][body] POST https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/firebaseapphosting.googleapis.com:enable [omitted]
+[debug] [2026-10-11T13:19:53.523Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:53.523Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:53.523Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:53.524Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:53.524Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:53.524Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:53.524Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:53.525Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:53.525Z] >>> [apiv2][query] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/developerconnect.googleapis.com [none]
+[debug] [2026-10-11T13:19:53.525Z] >>> [apiv2][(partial)header] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/developerconnect.googleapis.com  x-goog-user-project=zetlify-app
+[debug] [2026-10-11T13:19:53.526Z] >>> [apiv2][query] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/secretmanager.googleapis.com [none]
+[debug] [2026-10-11T13:19:53.526Z] >>> [apiv2][(partial)header] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/secretmanager.googleapis.com  x-goog-user-project=zetlify-app
+[debug] [2026-10-11T13:19:53.528Z] >>> [apiv2][query] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/run.googleapis.com [none]
+[debug] [2026-10-11T13:19:53.528Z] >>> [apiv2][(partial)header] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/run.googleapis.com  x-goog-user-project=zetlify-app
+[debug] [2026-10-11T13:19:53.529Z] >>> [apiv2][query] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/iam.googleapis.com [none]
+[debug] [2026-10-11T13:19:53.529Z] >>> [apiv2][(partial)header] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/iam.googleapis.com  x-goog-user-project=zetlify-app
+[debug] [2026-10-11T13:19:55.160Z] <<< [apiv2][status] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/secretmanager.googleapis.com 200
+[debug] [2026-10-11T13:19:55.160Z] <<< [apiv2][body] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/secretmanager.googleapis.com [omitted]
+[debug] [2026-10-11T13:19:55.184Z] <<< [apiv2][status] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/developerconnect.googleapis.com 200
+[debug] [2026-10-11T13:19:55.184Z] <<< [apiv2][body] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/developerconnect.googleapis.com [omitted]
+[debug] [2026-10-11T13:19:55.184Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:55.184Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:19:55.184Z] >>> [apiv2][query] POST https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/developerconnect.googleapis.com:enable [none]
+[debug] [2026-10-11T13:19:55.185Z] >>> [apiv2][(partial)header] POST https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/developerconnect.googleapis.com:enable  x-goog-user-project=zetlify-app
+[debug] [2026-10-11T13:19:55.190Z] <<< [apiv2][status] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/run.googleapis.com 200
+[debug] [2026-10-11T13:19:55.190Z] <<< [apiv2][body] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/run.googleapis.com [omitted]
+[debug] [2026-10-11T13:19:55.195Z] <<< [apiv2][status] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/iam.googleapis.com 200
+[debug] [2026-10-11T13:19:55.195Z] <<< [apiv2][body] GET https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/iam.googleapis.com [omitted]
+[debug] [2026-10-11T13:19:56.126Z] <<< [apiv2][status] POST https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/developerconnect.googleapis.com:enable 200
+[debug] [2026-10-11T13:19:56.126Z] <<< [apiv2][body] POST https://serviceusage.googleapis.com/v1/projects/zetlify-app/services/developerconnect.googleapis.com:enable [omitted]
+[debug] [2026-10-11T13:20:06.146Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:06.146Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:06.147Z] >>> [apiv2][query] POST https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts/firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com:testIamPermissions [none]
+[debug] [2026-10-11T13:20:06.147Z] >>> [apiv2][(partial)header] POST https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts/firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com:testIamPermissions  x-goog-user-project=zetlify-app
+[debug] [2026-10-11T13:20:06.147Z] >>> [apiv2][body] POST https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts/firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com:testIamPermissions {"permissions":["iam.serviceAccounts.actAs"]}
+[debug] [2026-10-11T13:20:07.800Z] <<< [apiv2][status] POST https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts/firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com:testIamPermissions 404
+[debug] [2026-10-11T13:20:07.801Z] <<< [apiv2][body] POST https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts/firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com:testIamPermissions {"error":{"code":404,"message":"Unknown service account","status":"NOT_FOUND"}}
+[debug] [2026-10-11T13:20:07.801Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:07.801Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:07.802Z] >>> [apiv2][query] GET https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts/firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com [none]
+[debug] [2026-10-11T13:20:09.065Z] <<< [apiv2][status] GET https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts/firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com 404
+[debug] [2026-10-11T13:20:09.065Z] <<< [apiv2][body] GET https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts/firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com {"error":{"code":404,"message":"Unknown service account","status":"NOT_FOUND"}}
+[debug] [2026-10-11T13:20:09.066Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:09.066Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:09.066Z] >>> [apiv2][query] POST https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts [none]
+[debug] [2026-10-11T13:20:09.066Z] >>> [apiv2][body] POST https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts {"accountId":"firebase-app-hosting-compute","serviceAccount":{"displayName":"Firebase App Hosting compute service account","description":"Default service account used to run builds and deploys for Firebase App Hosting"}}
+[debug] [2026-10-11T13:20:09.840Z] <<< [apiv2][status] POST https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts 200
+[debug] [2026-10-11T13:20:09.841Z] <<< [apiv2][body] POST https://iam.googleapis.com/v1/projects/zetlify-app/serviceAccounts [omitted]
+[debug] [2026-10-11T13:20:09.841Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:09.841Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:09.841Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/zetlify-app:getIamPolicy [none]
+[debug] [2026-10-11T13:20:11.560Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/zetlify-app:getIamPolicy 200
+[debug] [2026-10-11T13:20:11.560Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/zetlify-app:getIamPolicy {"version":1,"etag":"BwZZaPsY5fk=","bindings":[{"role":"roles/artifactregistry.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-artifactregistry.iam.gserviceaccount.com"]},{"role":"roles/cloudbuild.builds.builder","members":["serviceAccount:739771507455@cloudbuild.gserviceaccount.com"]},{"role":"roles/cloudbuild.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-cloudbuild.iam.gserviceaccount.com"]},{"role":"roles/cloudfunctions.serviceAgent","members":["serviceAccount:service-739771507455@gcf-admin-robot.iam.gserviceaccount.com"]},{"role":"roles/cloudscheduler.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-cloudscheduler.iam.gserviceaccount.com"]},{"role":"roles/containerregistry.ServiceAgent","members":["serviceAccount:service-739771507455@containerregistry.iam.gserviceaccount.com"]},{"role":"roles/editor","members":["serviceAccount:739771507455-compute@developer.gserviceaccount.com","serviceAccount:739771507455@cloudservices.gserviceaccount.com","serviceAccount:zetlify-app@appspot.gserviceaccount.com"]},{"role":"roles/firebase.managementServiceAgent","members":["serviceAccount:service-739771507455@gcp-sa-firebase.iam.gserviceaccount.com"]},{"role":"roles/firebasemods.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-firebasemods.iam.gserviceaccount.com"]},{"role":"roles/owner","members":["user:uniwritessss@gmail.com"]},{"role":"roles/run.serviceAgent","members":["serviceAccount:service-739771507455@serverless-robot-prod.iam.gserviceaccount.com"]}]}
+[debug] [2026-10-11T13:20:11.561Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:11.561Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:11.561Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/zetlify-app:setIamPolicy [none]
+[debug] [2026-10-11T13:20:11.561Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/zetlify-app:setIamPolicy {"policy":{"version":1,"etag":"BwZZaPsY5fk=","bindings":[{"role":"roles/artifactregistry.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-artifactregistry.iam.gserviceaccount.com"]},{"role":"roles/cloudbuild.builds.builder","members":["serviceAccount:739771507455@cloudbuild.gserviceaccount.com"]},{"role":"roles/cloudbuild.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-cloudbuild.iam.gserviceaccount.com"]},{"role":"roles/cloudfunctions.serviceAgent","members":["serviceAccount:service-739771507455@gcf-admin-robot.iam.gserviceaccount.com"]},{"role":"roles/cloudscheduler.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-cloudscheduler.iam.gserviceaccount.com"]},{"role":"roles/containerregistry.ServiceAgent","members":["serviceAccount:service-739771507455@containerregistry.iam.gserviceaccount.com"]},{"role":"roles/editor","members":["serviceAccount:739771507455-compute@developer.gserviceaccount.com","serviceAccount:739771507455@cloudservices.gserviceaccount.com","serviceAccount:zetlify-app@appspot.gserviceaccount.com"]},{"role":"roles/firebase.managementServiceAgent","members":["serviceAccount:service-739771507455@gcp-sa-firebase.iam.gserviceaccount.com"]},{"role":"roles/firebasemods.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-firebasemods.iam.gserviceaccount.com"]},{"role":"roles/owner","members":["user:uniwritessss@gmail.com"]},{"role":"roles/run.serviceAgent","members":["serviceAccount:service-739771507455@serverless-robot-prod.iam.gserviceaccount.com"]},{"role":"roles/firebaseapphosting.computeRunner","members":["serviceAccount:firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com"]},{"role":"roles/firebase.sdkAdminServiceAgent","members":["serviceAccount:firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com"]},{"role":"roles/developerconnect.readTokenAccessor","members":["serviceAccount:firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com"]},{"role":"roles/storage.objectViewer","members":["serviceAccount:firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com"]}]},"updateMask":"bindings"}
+[debug] [2026-10-11T13:20:12.659Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/zetlify-app:setIamPolicy 200
+[debug] [2026-10-11T13:20:12.659Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/zetlify-app:setIamPolicy {"version":1,"etag":"BwZdkHEVeyI=","bindings":[{"role":"roles/artifactregistry.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-artifactregistry.iam.gserviceaccount.com"]},{"role":"roles/cloudbuild.builds.builder","members":["serviceAccount:739771507455@cloudbuild.gserviceaccount.com"]},{"role":"roles/cloudbuild.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-cloudbuild.iam.gserviceaccount.com"]},{"role":"roles/cloudfunctions.serviceAgent","members":["serviceAccount:service-739771507455@gcf-admin-robot.iam.gserviceaccount.com"]},{"role":"roles/cloudscheduler.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-cloudscheduler.iam.gserviceaccount.com"]},{"role":"roles/containerregistry.ServiceAgent","members":["serviceAccount:service-739771507455@containerregistry.iam.gserviceaccount.com"]},{"role":"roles/developerconnect.readTokenAccessor","members":["serviceAccount:firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com"]},{"role":"roles/editor","members":["serviceAccount:739771507455-compute@developer.gserviceaccount.com","serviceAccount:739771507455@cloudservices.gserviceaccount.com","serviceAccount:zetlify-app@appspot.gserviceaccount.com"]},{"role":"roles/firebase.managementServiceAgent","members":["serviceAccount:service-739771507455@gcp-sa-firebase.iam.gserviceaccount.com"]},{"role":"roles/firebase.sdkAdminServiceAgent","members":["serviceAccount:firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com"]},{"role":"roles/firebaseapphosting.computeRunner","members":["serviceAccount:firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com"]},{"role":"roles/firebasemods.serviceAgent","members":["serviceAccount:service-739771507455@gcp-sa-firebasemods.iam.gserviceaccount.com"]},{"role":"roles/owner","members":["user:uniwritessss@gmail.com"]},{"role":"roles/run.serviceAgent","members":["serviceAccount:service-739771507455@serverless-robot-prod.iam.gserviceaccount.com"]},{"role":"roles/storage.objectViewer","members":["serviceAccount:firebase-app-hosting-compute@zetlify-app.iam.gserviceaccount.com"]}]}
+[info] i  This command links your local project to Firebase App Hosting. You will be able to deploy your web app with `firebase deploy` after setup. 
+[debug] [2026-10-11T13:20:21.369Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:21.369Z] Checked if tokens are valid: true, expires at: 1791728377298
+[debug] [2026-10-11T13:20:21.369Z] >>> [apiv2][query] GET https://firebaseapphosting.googleapis.com/v1beta/projects/zetlify-app/locations/-/backends 
+[debug] [2026-10-11T13:20:22.844Z] <<< [apiv2][status] GET https://firebaseapphosting.googleapis.com/v1beta/projects/zetlify-app/locations/-/backends 200
+[debug] [2026-10-11T13:20:22.844Z] <<< [apiv2][body] GET https://firebaseapphosting.googleapis.com/v1beta/projects/zetlify-app/locations/-/backends {}
