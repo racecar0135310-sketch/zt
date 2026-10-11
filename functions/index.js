@@ -17,6 +17,71 @@ app.use(cors({
 
 app.use(express.json({ limit: '50mb' }));
 
+// Per-instance sliding-window limits. Cloud Functions may cold-start or
+// scale out, so strict cross-instance guarantees require Redis/Firestore.
+const rateLimitBuckets = new Map();
+function clientIp(req) {
+  return req.ip || (req.socket && req.socket.remoteAddress) || 'unknown';
+}
+function rateLimit({ id, limit, windowMs, key }) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const keys = (typeof key === 'function' ? key(req) : [`ip:${clientIp(req)}`])
+      .filter(Boolean).map(bucketKey => `${id}:${bucketKey}`);
+    const buckets = keys.map(bucketKey => {
+      const recent = (rateLimitBuckets.get(bucketKey) || []).filter(time => now - time < windowMs);
+      return { bucketKey, recent };
+    });
+    const blocked = buckets.find(bucket => bucket.recent.length >= limit);
+    if (blocked) {
+      const retryAfter = Math.max(1, Math.ceil((blocked.recent[0] + windowMs - now) / 1000));
+      res.set('Retry-After', String(retryAfter));
+      return res.status(429).json({ error: 'Too many requests — please wait and try again.' });
+    }
+    for (const bucket of buckets) {
+      bucket.recent.push(now);
+      rateLimitBuckets.set(bucket.bucketKey, bucket.recent);
+    }
+    if (rateLimitBuckets.size > 5000) {
+      for (const [bucketKey, timestamps] of rateLimitBuckets) {
+        if (!timestamps.some(time => now - time < windowMs)) rateLimitBuckets.delete(bucketKey);
+      }
+    }
+    next();
+  };
+}
+const ipAndIdentifier = (identifier) => req => {
+  const value = String(identifier(req) || 'unknown').trim().toLowerCase();
+  const ip = clientIp(req);
+  return [`ip:${ip}`, `ip-identifier:${ip}:${value}`];
+};
+const adminAuthBackoffs = new Map();
+function adminBackoffGuard(req, res, next) {
+  const state = adminAuthBackoffs.get(`${clientIp(req)}:admin`);
+  if (state && state.lockedUntil > Date.now()) {
+    const retryAfter = Math.ceil((state.lockedUntil - Date.now()) / 1000);
+    res.set('Retry-After', String(retryAfter));
+    return res.status(429).json({ error: 'Too many requests — please wait and try again.' });
+  }
+  next();
+}
+function recordAdminAuthResult(req, succeeded) {
+  const key = `${clientIp(req)}:admin`;
+  if (succeeded) {
+    adminAuthBackoffs.delete(key);
+    return;
+  }
+  const state = adminAuthBackoffs.get(key) || { failures: 0, lockouts: 0, lockedUntil: 0 };
+  state.failures += 1;
+  if (state.failures >= 5) {
+    state.failures = 0;
+    state.lockouts += 1;
+    const delay = Math.min(15 * 60 * 1000 * (2 ** (state.lockouts - 1)), 24 * 60 * 60 * 1000);
+    state.lockedUntil = Date.now() + delay;
+  }
+  adminAuthBackoffs.set(key, state);
+}
+
 // ─── STRICT CACHE CONTROL ──────────────────────────────────────
 app.use((req, res, next) => {
   res.header('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -255,6 +320,49 @@ function encryptCustomerPassword(plain) {
   const tag = cipher.getAuthTag();
   return `enc$${iv.toString('hex')}$${tag.toString('hex')}$${encrypted.toString('hex')}`;
 }
+// ─── Netflix tiered pricing — server-side mirror ────────────────────
+// Must stay mathematically identical to getNetflixPrice() in index.html
+// (same default tables, same admin-override precedence, same blend
+// formula) — this is what actually determines what gets charged, since
+// deductCredits and the renewal route never trust a price sent by the
+// browser. If the frontend's pricing logic ever changes, this needs the
+// same change made here, or a customer buying more screens (or more
+// months) could show one price on screen and be charged a different one.
+const DEFAULT_NETFLIX_SCREEN_PRICING = { 1: 350, 2: 650, 3: 800, 4: 900, 5: 1000 };
+const DEFAULT_NETFLIX_MONTH_PRICING = { 1: 350, 2: 700, 3: 850, 4: 1000, 5: 1250, 6: 1500, 7: 1750, 8: 2000, 9: 2250, 10: 2500, 11: 2750, 12: 3000 };
+
+function getNetflixPriceServer(subscription, screens, months) {
+  const basePrice = Number(subscription?.sellingPrice) || 0;
+  const screenCount = Number(screens) || 1;
+  const totalMonths = Number(months) || 1;
+  const adminScreenTable = (subscription?.netflixPricing && subscription.netflixPricing.screens) || {};
+  const adminMonthTable = (subscription?.netflixPricing && subscription.netflixPricing.months) || {};
+  const screenTable = { ...DEFAULT_NETFLIX_SCREEN_PRICING, ...adminScreenTable };
+  const monthTable = { ...DEFAULT_NETFLIX_MONTH_PRICING, ...adminMonthTable };
+
+  const screenPrice = screenTable[screenCount] != null
+    ? Number(screenTable[screenCount])
+    : basePrice * screenCount;
+
+  let monthPrice;
+  if (monthTable[totalMonths] != null) {
+    monthPrice = Number(monthTable[totalMonths]);
+  } else if (totalMonths > 12 && Object.keys(monthTable).length) {
+    const enteredMonths = Object.keys(monthTable).map(Number).sort((a, b) => a - b);
+    const last = enteredMonths[enteredMonths.length - 1];
+    const prev = enteredMonths[enteredMonths.length - 2];
+    const step = prev != null ? (Number(monthTable[last]) - Number(monthTable[prev])) / (last - prev) : basePrice;
+    monthPrice = Number(monthTable[last]) + step * (totalMonths - last);
+  } else {
+    monthPrice = basePrice * totalMonths;
+  }
+
+  const blendBase = screenTable[1] != null ? Number(screenTable[1])
+    : (monthTable[1] != null ? Number(monthTable[1]) : basePrice);
+
+  if (!blendBase) return Math.round(screenPrice + monthPrice);
+  return Math.round((screenPrice * monthPrice) / blendBase);
+}
 function isEncrypted(stored) {
   return typeof stored === 'string' && stored.startsWith('enc$');
 }
@@ -453,6 +561,69 @@ function requireAccess(section, option) {
   };
 }
 
+// Customer access to account-specific data is always scoped to the signed-in
+// username; admin access is permitted only where a route explicitly opts in.
+function requireSelfUserParam(paramName = 'username') {
+  return (req, res, next) => {
+    const auth = getAuth(req);
+    if (!auth || auth.r !== 'user') return res.status(401).json({ error: 'Please log in to do that' });
+    if (auth.u !== req.params[paramName]) return res.status(403).json({ error: 'You can only access your own account' });
+    req.authUsername = auth.u;
+    next();
+  };
+}
+function requireSelfOrAdminParam(paramName = 'username') {
+  return (req, res, next) => {
+    const auth = getAuth(req);
+    if (!auth) return res.status(401).json({ error: 'Login required' });
+    if (auth.r === 'admin') return next();
+    if (auth.r === 'user' && auth.u === req.params[paramName]) {
+      req.authUsername = auth.u;
+      return next();
+    }
+    return res.status(403).json({ error: 'You can only access your own account' });
+  };
+}
+function requireSelfOrAccess(section, option, paramName = 'username') {
+  return async (req, res, next) => {
+    try {
+      const auth = getAuth(req);
+      if (!auth) return res.status(401).json({ error: 'Login required' });
+      if (auth.r === 'user' && auth.u === req.params[paramName]) {
+        req.authUsername = auth.u;
+        return next();
+      }
+      if (auth.r === 'admin') return next();
+      if (auth.r === 'manager' && await managerHasAccess(auth.u, section, option)) return next();
+      return res.status(403).json({ error: 'You can only access your own account or use an authorized admin account' });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  };
+}
+function requireSelfUserBody(field = 'username') {
+  return (req, res, next) => {
+    const auth = getAuth(req);
+    if (!auth || auth.r !== 'user') return res.status(401).json({ error: 'Please log in to do that' });
+    if (!req.body || auth.u !== req.body[field]) return res.status(403).json({ error: 'You can only access your own account' });
+    req.authUsername = auth.u;
+    next();
+  };
+}
+function requireSelfOrAdminBody(field = 'username') {
+  return (req, res, next) => {
+    const auth = getAuth(req);
+    if (!auth) return res.status(401).json({ error: 'Login required' });
+    if (auth.r === 'admin') return next();
+    const target = req.body && req.body.customer && req.body.customer[field];
+    if (auth.r === 'user' && target && auth.u === target) {
+      req.authUsername = auth.u;
+      return next();
+    }
+    return res.status(403).json({ error: 'You can only allocate a subscription to yourself' });
+  };
+}
+
 // Short-lived, single-purpose token proving "this caller just verified
 // their WhatsApp number matches this username" — issued by
 // /api/users/verify-whatsapp and required by PUT /api/users/:username
@@ -547,18 +718,20 @@ app.get('/api/admin/settings', async (req, res) => {
 
 // Admin login: the entered password is checked here on the server and only
 // a yes/no result is returned. The real password never reaches the browser.
-app.post('/api/admin/login', async (req, res) => {
+app.post('/api/admin/login', adminBackoffGuard, rateLimit({ id: 'admin-login', limit: 5, windowMs: 15 * 60 * 1000, key: ipAndIdentifier(() => 'admin') }), async (req, res) => {
   try {
     const { password } = req.body;
     if (!password) return res.status(400).json({ success: false, error: 'Password is required' });
     const settings = await getAdminSettings();
     if (!verifyPassword(password, settings.password)) {
+      recordAdminAuthResult(req, false);
       return res.status(401).json({ success: false, error: 'Invalid password' });
     }
     // Upgrade a legacy plain-text admin password to a hash on first login.
     if (!isHashed(settings.password)) {
       await adminSettingsCollection.updateOne({ _id: ADMIN_SETTINGS_ID }, { $set: { password: hashPassword(password) } });
     }
+    recordAdminAuthResult(req, true);
     res.json({ success: true, token: signToken({ u: 'admin', r: 'admin' }) });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -589,7 +762,7 @@ app.put('/api/admin/settings', async (req, res) => {
     if (recoveryNumber !== undefined) update.recoveryNumber = recoveryNumber;
     // Only ever store a theme id we actually ship — an unrecognized value
     // here would otherwise silently break every visitor's page.
-    const VALID_THEMES = ['classic', 'spiderman'];
+    const VALID_THEMES = ['classic', 'spiderman', 'pakistan'];
     if (theme !== undefined) {
       if (!VALID_THEMES.includes(theme)) {
         return res.status(400).json({ error: 'Unknown theme' });
@@ -615,7 +788,7 @@ app.put('/api/admin/settings', async (req, res) => {
 // Forgot-password recovery: verified entirely server-side against the
 // stored recovery number, so the correct number is never sent to (or
 // checked in) the browser — only whether it matched.
-app.post('/api/admin/recover', async (req, res) => {
+app.post('/api/admin/recover', adminBackoffGuard, rateLimit({ id: 'admin-recover', limit: 5, windowMs: 15 * 60 * 1000, key: ipAndIdentifier(() => 'admin') }), async (req, res) => {
   try {
     const { recoveryNumber, newPassword } = req.body;
     if (!recoveryNumber || !newPassword) {
@@ -629,9 +802,11 @@ app.post('/api/admin/recover', async (req, res) => {
       return res.status(400).json({ error: 'No recovery number has been set up for this admin account' });
     }
     if (String(settings.recoveryNumber).trim() !== String(recoveryNumber).trim()) {
+      recordAdminAuthResult(req, false);
       return res.status(400).json({ error: 'Incorrect recovery number' });
     }
     await adminSettingsCollection.updateOne({ _id: ADMIN_SETTINGS_ID }, { $set: { password: hashPassword(newPassword) } });
+    recordAdminAuthResult(req, true);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1086,7 +1261,7 @@ app.delete('/api/subscriptions/:id', requireAccess('subscriptions', 'delete'), a
 // below only touches the exact account/screen it targets instead of replacing the
 // entire accounts array, so two things happening at once can never wipe each other out.
 
-app.post('/api/subscriptions/:id/allocate', async (req, res) => {
+app.post('/api/subscriptions/:id/allocate', requireSelfOrAdminBody(), async (req, res) => {
   try {
     const { accountId, screenId, customer, purchaseId } = req.body;
     if (!accountId || !screenId || !customer || !customer.username) {
@@ -1105,6 +1280,7 @@ app.post('/api/subscriptions/:id/allocate', async (req, res) => {
     const claimed = await claimIdempotencyKey(key);
     if (!claimed) {
       const existing = await subscriptionsCollection.findOne({ id: req.params.id });
+      if (!existing) return res.status(404).json({ error: 'Subscription not found' });
       return res.json({
         ...maskSubscriptionForViewer(existing, auth),
         claimedCredentials: maySeeCreds ? slotCredentials(existing, accountId, screenId) : BLANK_CREDENTIALS
@@ -1129,7 +1305,12 @@ app.post('/api/subscriptions/:id/allocate', async (req, res) => {
       { arrayFilters: [{ 'acc.id': accountId }, { 'scr.id': screenId }] }
     );
     if (result.matchedCount === 0) {
+      if (key) await processedPurchasesCollection.deleteOne({ _id: key });
       return res.status(404).json({ error: 'Subscription, account, or screen not found' });
+    }
+    if (result.modifiedCount === 0) {
+      if (key) await processedPurchasesCollection.deleteOne({ _id: key });
+      return res.status(409).json({ error: 'That account/screen is no longer available — please try again' });
     }
     const updated = await subscriptionsCollection.findOne({ id: req.params.id });
     res.json({
@@ -1186,7 +1367,7 @@ app.put('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers/
 // same "server decides the price, never trust the client" rule as regular
 // purchases. Deduct-then-extend, with a refund if the extend step fails
 // for any reason, so a renewal can never charge without actually renewing.
-app.post('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers/:username/renew', async (req, res) => {
+app.post('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers/:username/renew', requireSelfOrAdminParam(), async (req, res) => {
   try {
     const { purchaseId } = req.body || {};
 
@@ -1200,9 +1381,15 @@ app.post('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers
     const renewMonths = Number(customer.months) || 0;
     const renewDays = renewMonths > 0 ? 0 : (Number(customer.days) || 30);
     const perMonth = Number(sub.sellingPrice) || 0;
-    const amount = renewMonths > 0
-      ? Math.round(perMonth * renewMonths)
-      : Math.round(perMonth * (renewDays / 30));
+    // Netflix's tiered per-screen pricing only has whole-month tiers, so a
+    // days-based renewal (not a fixed number of months) still falls back to
+    // the plain per-month rate — there's no clean tiered equivalent for a
+    // partial month.
+    const amount = sub.type === 'netflix' && renewMonths > 0
+      ? getNetflixPriceServer(sub, customer.screens, renewMonths)
+      : renewMonths > 0
+        ? Math.round(perMonth * renewMonths)
+        : Math.round(perMonth * (renewDays / 30));
     if (!amount || amount <= 0) {
       return res.status(400).json({ error: "This subscription doesn't have a valid renewal price set — contact support." });
     }
@@ -1291,7 +1478,7 @@ app.delete('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/custome
 });
 
 // ---- Users ----
-app.post('/api/users/signup', async (req, res) => {
+app.post('/api/users/signup', rateLimit({ id: 'user-signup', limit: 5, windowMs: 60 * 60 * 1000 }), async (req, res) => {
   try {
     const { name, username, password, whatsapp } = req.body;
     if (!name || !username || !password || !whatsapp) {
@@ -1346,7 +1533,7 @@ app.post('/api/users/signup', async (req, res) => {
   }
 });
 
-app.post('/api/users/login', async (req, res) => {
+app.post('/api/users/login', rateLimit({ id: 'user-login', limit: 10, windowMs: 15 * 60 * 1000, key: ipAndIdentifier(req => req.body && req.body.username) }), async (req, res) => {
   try {
     const { username, password } = req.body;
     const user = await usersCollection.findOne({ username });
@@ -1369,17 +1556,33 @@ app.post('/api/users/login', async (req, res) => {
 // on file for this username. Numbers are compared after stripping spaces,
 // dashes and a leading "+" so small formatting differences don't block a
 // legitimate match. Never reveals whether the username itself exists.
-app.post('/api/users/verify-whatsapp', async (req, res) => {
+const verifyWhatsappFailures = new Map();
+const verifyWhatsappLocks = new Map();
+app.post('/api/users/verify-whatsapp', rateLimit({ id: 'whatsapp-verify', limit: 5, windowMs: 15 * 60 * 1000, key: ipAndIdentifier(req => req.body && req.body.username) }), async (req, res) => {
   try {
     const { username, whatsapp } = req.body;
     if (!username || !whatsapp) {
       return res.status(400).json({ error: 'Username and WhatsApp number are required' });
     }
+    const usernameKey = String(username).trim().toLowerCase();
+    const lockedUntil = verifyWhatsappLocks.get(usernameKey) || 0;
+    if (lockedUntil > Date.now()) {
+      res.set('Retry-After', String(Math.ceil((lockedUntil - Date.now()) / 1000)));
+      return res.status(429).json({ error: 'Too many requests — please wait and try again.' });
+    }
     const normalize = (n) => String(n || '').replace(/[\s\-()]/g, '').replace(/^\+/, '');
     const user = await usersCollection.findOne({ username });
     if (!user || normalize(user.whatsapp) !== normalize(whatsapp)) {
+      const prior = verifyWhatsappFailures.get(usernameKey);
+      const next = !prior || Date.now() - prior.startedAt >= 15 * 60 * 1000
+        ? { count: 1, startedAt: Date.now() }
+        : { ...prior, count: prior.count + 1 };
+      verifyWhatsappFailures.set(usernameKey, next);
+      if (next.count >= 5) verifyWhatsappLocks.set(usernameKey, Date.now() + 15 * 60 * 1000);
       return res.status(401).json({ success: false, error: 'That WhatsApp number does not match our records for this username.' });
     }
+    verifyWhatsappFailures.delete(usernameKey);
+    verifyWhatsappLocks.delete(usernameKey);
     res.json({ success: true, resetToken: signResetToken(username) });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1416,13 +1619,13 @@ app.get('/api/users/:username', async (req, res) => {
       const decrypted = decryptCustomerPassword(user.password);
       return res.json({ ...user, password: decrypted, passwordAvailable: decrypted !== null });
     }
-    res.json(sanitizeUser(user));
+    res.json({ username: user.username, name: user.name || '' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.put('/api/users/:username/incrementPurchase', async (req, res) => {
+app.put('/api/users/:username/incrementPurchase', requireSelfOrAdminParam(), async (req, res) => {
   try {
     const result = await usersCollection.updateOne(
       { username: req.params.username },
@@ -1473,7 +1676,7 @@ app.post('/api/users/:username/addCredits', requireAccess('users', 'addCredits')
 
 // Full credit history for a customer: every add and every spend, with the
 // date/time and what it was for, newest first.
-app.get('/api/users/:username/credit-history', async (req, res) => {
+app.get('/api/users/:username/credit-history', requireSelfOrAccess('users', undefined), async (req, res) => {
   try {
     const list = await creditHistoryCollection
       .find({ username: req.params.username })
@@ -1494,27 +1697,31 @@ app.get('/api/users/:username/credit-history', async (req, res) => {
 // the check and the decrement in a single findOneAndUpdate makes it
 // impossible for two concurrent requests to both succeed against the same
 // balance.
-app.post('/api/users/:username/deductCredits', async (req, res) => {
+app.post('/api/users/:username/deductCredits', requireSelfOrAccess('users', 'addCredits'), async (req, res) => {
   try {
-    let { amount, purchaseId, reason, subscriptionId, months, dealId } = req.body;
+    let { amount, purchaseId, reason, subscriptionId, months, screens, dealId } = req.body;
 
     // For a real purchase, never trust the credit amount the browser sends —
     // always recompute it here from the subscription's (or deal's) actual
     // current price in the database. The client only sends subscriptionId/
-    // months (or dealId) to identify WHAT was bought; the server decides
-    // WHAT IT COSTS. This closes two problems at once: a customer's browser
-    // showing a stale/out-of-date price (e.g. after the admin changes it)
-    // can no longer result in under-charging, and nobody can tamper with
-    // the request to pay less than the real price.
+    // months/screens (or dealId) to identify WHAT was bought; the server
+    // decides WHAT IT COSTS. This closes two problems at once: a customer's
+    // browser showing a stale/out-of-date price (e.g. after the admin
+    // changes it) can no longer result in under-charging, and nobody can
+    // tamper with the request to pay less than the real price.
     // Admin's manual credit adjustments (add/deduct from the Users tab)
     // pass neither subscriptionId nor dealId, so they keep using the raw
     // `amount` exactly as before.
     if (subscriptionId) {
       const sub = await subscriptionsCollection.findOne({ id: subscriptionId });
       if (!sub) return res.status(404).json({ error: 'Subscription not found' });
-      const perMonth = Number(sub.sellingPrice) || 0;
       const totalMonths = Number(months) || 1;
-      amount = Math.round(perMonth * totalMonths);
+      // Netflix is sold by screen count too, with its own bulk-discount
+      // tables (see getNetflixPriceServer) — a plain perMonth × months
+      // rate would silently undercharge anyone buying more than 1 screen.
+      amount = sub.type === 'netflix'
+        ? getNetflixPriceServer(sub, screens, totalMonths)
+        : Math.round((Number(sub.sellingPrice) || 0) * totalMonths);
     } else if (dealId) {
       const deal = await dealsCollection.findOne({ id: dealId });
       if (!deal) return res.status(404).json({ error: 'Deal not found' });
@@ -1937,9 +2144,15 @@ app.get('/api/social-orders', requireAccess('social'), async (req, res) => {
   }
 });
 
-app.post('/api/social-orders', async (req, res) => {
+app.post('/api/social-orders', rateLimit({ id: 'social-orders', limit: 10, windowMs: 60 * 60 * 1000 }), async (req, res) => {
   try {
-    const { platformId, platformName, serviceId, serviceName, quantity, accountLink, videoLink, name, whatsapp, price, dealId, username } = req.body;
+    const { platformId, platformName, serviceId, serviceName, quantity, accountLink, videoLink, name, whatsapp, price, dealId } = req.body;
+    let { username } = req.body;
+    const auth = getAuth(req);
+    if (auth && auth.r === 'user' && username && auth.u !== username) {
+      return res.status(403).json({ error: 'You can only place an order for your own account' });
+    }
+    if (auth && auth.r === 'user') username = auth.u;
     if (!platformName || !serviceName || !quantity || !whatsapp) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -1970,7 +2183,7 @@ app.post('/api/social-orders', async (req, res) => {
 // A logged-in customer's own order history — both "in process" (pending)
 // and "successfully purchased" (completed) social media orders — shown in
 // their Cart / My Orders tab.
-app.get('/api/social-orders/user/:username', async (req, res) => {
+app.get('/api/social-orders/user/:username', requireSelfOrAdminParam(), async (req, res) => {
   try {
     const orders = await socialOrdersCollection.find({ username: req.params.username }).sort({ createdAt: -1 }).toArray();
     res.json(orders);
@@ -2009,7 +2222,7 @@ app.delete('/api/social-orders/:id', requireAccess('social', 'manageOrders'), as
 // platforms/services) and only pay once the cart total clears Rs 300.
 const MIN_CART_PURCHASE = 300;
 
-app.get('/api/cart/:username', async (req, res) => {
+app.get('/api/cart/:username', requireSelfUserParam(), async (req, res) => {
   try {
     const items = await cartCollection.find({ username: req.params.username }).sort({ createdAt: 1 }).toArray();
     res.json(items);
@@ -2018,7 +2231,7 @@ app.get('/api/cart/:username', async (req, res) => {
   }
 });
 
-app.post('/api/cart', async (req, res) => {
+app.post('/api/cart', rateLimit({ id: 'cart-add', limit: 30, windowMs: 60 * 60 * 1000 }), requireSelfUserBody(), async (req, res) => {
   try {
     const { username, platformId, platformName, serviceId, serviceName, quantity, accountLink, videoLink, price } = req.body;
     if (!username || !platformName || !serviceName || !quantity || !price) {
@@ -2045,7 +2258,7 @@ app.post('/api/cart', async (req, res) => {
   }
 });
 
-app.delete('/api/cart/:username/:itemId', async (req, res) => {
+app.delete('/api/cart/:username/:itemId', requireSelfUserParam(), async (req, res) => {
   try {
     await cartCollection.deleteOne({ id: req.params.itemId, username: req.params.username });
     const items = await cartCollection.find({ username: req.params.username }).sort({ createdAt: 1 }).toArray();
@@ -2058,7 +2271,7 @@ app.delete('/api/cart/:username/:itemId', async (req, res) => {
 // Pay for everything currently in the cart in one go — deducts the combined
 // total from credits, files a waiting/fulfillment entry and an order record
 // per item (same as a direct social order), then empties the cart.
-app.post('/api/cart/:username/checkout', async (req, res) => {
+app.post('/api/cart/:username/checkout', requireSelfUserParam(), async (req, res) => {
   try {
     const { username } = req.params;
     const { purchaseId } = req.body;
@@ -2158,47 +2371,55 @@ app.post('/api/cart/:username/checkout', async (req, res) => {
 
 
 // ---- OTP ----
-app.post('/api/otp/generate', async (req, res) => {
+app.post('/api/otp/generate', rateLimit({ id: 'otp-generate', limit: 3, windowMs: 5 * 60 * 1000, key: ipAndIdentifier(req => req.body && req.body.userIdentifier) }), async (req, res) => {
   try {
     const { userIdentifier, description } = req.body;
-    const otp = String(Math.floor(1000 + Math.random() * 9000));
+    if (!userIdentifier || !String(userIdentifier).trim()) {
+      return res.status(400).json({ error: 'Customer identifier is required' });
+    }
+    const otp = String(crypto.randomInt(1000, 10000));
     // Matches the 60-second countdown shown on screen — it used to be
     // 5 minutes here while the UI displayed a 1-minute countdown, so the
     // code kept working long after it visibly said "expired".
     const expiresAt = new Date(Date.now() + 60 * 1000);
     const newOTP = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       otp,
-      userIdentifier: userIdentifier || 'Unknown',
+      userIdentifier: String(userIdentifier).trim(),
       description: description || '',
       createdAt: new Date(),
       expiresAt,
       verified: false,
     };
     await otpsCollection.insertOne(newOTP);
-    console.log(`✅ OTP generated: ${otp} for ${userIdentifier} - ${description}`);
+    console.log('✅ OTP generated for a customer identifier');
     res.json({ success: true, otpId: newOTP.id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/otp/verify', async (req, res) => {
+app.post('/api/otp/verify', rateLimit({ id: 'otp-verify', limit: 5, windowMs: 5 * 60 * 1000 }), async (req, res) => {
   try {
-    const { otp } = req.body;
-    if (!otp) return res.status(400).json({ error: 'OTP required' });
-    const record = await otpsCollection.findOne({ otp, verified: false });
+    const { otp, otpId } = req.body;
+    if (!otp || !otpId) return res.status(400).json({ error: 'OTP and request ID are required' });
+    const record = await otpsCollection.findOne({ id: otpId, otp: String(otp), verified: false });
     if (!record) {
       return res.status(400).json({ error: 'Invalid OTP' });
+    }
+    const auth = getAuth(req);
+    if (!auth || auth.r !== 'user' || auth.u !== record.userIdentifier) {
+      return res.status(403).json({ error: 'This OTP was issued for a different account' });
     }
     if (record.expiresAt < new Date()) {
       return res.status(400).json({ error: 'Time is up! Please request a new OTP.', expired: true });
     }
-    await otpsCollection.updateOne(
-      { _id: record._id },
+    const verifyResult = await otpsCollection.updateOne(
+      { _id: record._id, verified: false },
       { $set: { verified: true } }
     );
-    console.log(`✅ OTP ${otp} verified`);
+    if (verifyResult.modifiedCount === 0) return res.status(400).json({ error: 'Invalid OTP' });
+    console.log('✅ OTP verified for its intended customer');
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2293,16 +2514,39 @@ app.delete('/api/promotions/:id', requireAccess('promotions', 'delete'), async (
 // Either way, nothing is auto-removed: the admin sees it here until they
 // manually mark it fulfilled once the account has been created and given
 // to the customer.
-app.get('/api/waiting', requireAccess('waiting'), async (req, res) => {
+app.get('/api/waiting', async (req, res) => {
   try {
-    const list = await waitingCollection.find({}).sort({ createdAt: -1 }).toArray();
-    res.json(list);
+    const { username } = req.query;
+    if (username) {
+      // Customer-facing fetch — so their own portal can show "this is
+      // still pending" for anything of theirs waiting on the admin to add
+      // an account. Only their own entries, and only once they've verified
+      // that this is actually them (or the admin looking on their behalf).
+      const auth = getAuth(req);
+      if (!auth || (auth.r !== 'admin' && auth.u !== username)) return res.json([]);
+      const list = await waitingCollection.find({ username, fulfilled: { $ne: true } }).sort({ createdAt: -1 }).toArray();
+      return res.json(list);
+    }
+    // No username → the admin's full list, same access check as before.
+    const auth = getAuth(req);
+    if (!auth) return res.status(401).json({ error: 'Login required' });
+    if (auth.r === 'admin') {
+      const list = await waitingCollection.find({}).sort({ createdAt: -1 }).toArray();
+      return res.json(list);
+    }
+    if (auth.r === 'manager') {
+      const ok = await managerHasAccess(auth.u, 'waiting');
+      if (!ok) return res.status(403).json({ error: 'You do not have permission for this action' });
+      const list = await waitingCollection.find({}).sort({ createdAt: -1 }).toArray();
+      return res.json(list);
+    }
+    return res.status(401).json({ error: 'Admin login required' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/waiting', async (req, res) => {
+app.post('/api/waiting', rateLimit({ id: 'waiting-create', limit: 10, windowMs: 60 * 60 * 1000 }), async (req, res) => {
   try {
     const {
       subscriptionId, subscriptionName, isCustomRequest,
@@ -2319,6 +2563,10 @@ app.post('/api/waiting', async (req, res) => {
     if (!subscriptionName || !username || !whatsapp) {
       console.error('POST /api/waiting rejected (missing field):', JSON.stringify(req.body));
       return res.status(400).json({ error: 'subscriptionName, username and whatsapp are required' });
+    }
+    const auth = getAuth(req);
+    if (auth && auth.r === 'user' && auth.u !== username) {
+      return res.status(403).json({ error: 'You can only create a request for your own account' });
     }
 
     // Same waiting-request submitted twice? Don't add a duplicate entry.
@@ -2386,7 +2634,7 @@ app.get('/api/reviews', async (req, res) => {
   }
 });
 
-app.post('/api/reviews', async (req, res) => {
+app.post('/api/reviews', rateLimit({ id: 'review-create', limit: 5, windowMs: 60 * 60 * 1000 }), async (req, res) => {
   try {
     const rating = parseInt(req.body.rating, 10);
     const reviewText = (req.body.reviewText || '').toString().trim();
@@ -2673,6 +2921,9 @@ app.get('/api/custom-grants', async (req, res) => {
     const { username } = req.query;
     const auth = getAuth(req);
     if (username) {
+      if (!auth || (auth.r !== 'admin' && (auth.r !== 'user' || auth.u !== username))) {
+        return res.status(auth ? 403 : 401).json({ error: 'You can only access your own custom grants' });
+      }
       // Customer-facing fetch — strip the admin-only cost/pricing fields, and
       // only include the granted account password for the customer themselves
       // (or the admin), so nobody can read someone else's keys by guessing a
@@ -3070,6 +3321,42 @@ app.get('/api/health', (req, res) => {
 async function cleanupExpiredCustomers() {
   try {
     const todayStr = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+
+    // Before deleting anything: permanently flag any screen that has an
+    // expired customer the admin hasn't handled yet (i.e. no PIN reset
+    // since that customer expired). This has to happen BEFORE the $pull
+    // below, because once that customer record is gone, screenNeedsReset()
+    // on the frontend has nothing left to compute the reminder from. That
+    // used to mean: if the admin didn't open the portal within the hour
+    // between expiry and this cleanup running, the blink reminder would
+    // silently vanish before they ever saw it. needsPinReset survives the
+    // deletion — handleGeneratePin() on the frontend clears it once the
+    // admin actually resets the PIN.
+    const subsWithExpired = await subscriptionsCollection.find({
+      'accounts.screens.customers.expiryDate': { $exists: true, $ne: '', $lt: todayStr }
+    }).toArray();
+
+    for (const sub of subsWithExpired) {
+      let touched = false;
+      for (const acc of (sub.accounts || [])) {
+        for (const screen of (acc.screens || [])) {
+          if (screen.needsPinReset) continue; // already flagged, nothing to do
+          const hasUnhandledExpired = (screen.customers || []).some(c => {
+            if (!c.expiryDate || c.expiryDate >= todayStr) return false;
+            if (screen.pinResetAt && screen.pinResetAt.slice(0, 10) >= c.expiryDate) return false;
+            return true;
+          });
+          if (hasUnhandledExpired) {
+            screen.needsPinReset = true;
+            touched = true;
+          }
+        }
+      }
+      if (touched) {
+        await subscriptionsCollection.updateOne({ _id: sub._id }, { $set: { accounts: sub.accounts } });
+      }
+    }
+
     const result = await subscriptionsCollection.updateMany(
       {},
       {

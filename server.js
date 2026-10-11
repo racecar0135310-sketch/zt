@@ -221,6 +221,49 @@ function encryptCustomerPassword(plain) {
   const tag = cipher.getAuthTag();
   return `enc$${iv.toString('hex')}$${tag.toString('hex')}$${encrypted.toString('hex')}`;
 }
+// ─── Netflix tiered pricing — server-side mirror ────────────────────
+// Must stay mathematically identical to getNetflixPrice() in index.html
+// (same default tables, same admin-override precedence, same blend
+// formula) — this is what actually determines what gets charged, since
+// deductCredits and the renewal route never trust a price sent by the
+// browser. If the frontend's pricing logic ever changes, this needs the
+// same change made here, or a customer buying more screens (or more
+// months) could show one price on screen and be charged a different one.
+const DEFAULT_NETFLIX_SCREEN_PRICING = { 1: 350, 2: 650, 3: 800, 4: 900, 5: 1000 };
+const DEFAULT_NETFLIX_MONTH_PRICING = { 1: 350, 2: 700, 3: 850, 4: 1000, 5: 1250, 6: 1500, 7: 1750, 8: 2000, 9: 2250, 10: 2500, 11: 2750, 12: 3000 };
+
+function getNetflixPriceServer(subscription, screens, months) {
+  const basePrice = Number(subscription?.sellingPrice) || 0;
+  const screenCount = Number(screens) || 1;
+  const totalMonths = Number(months) || 1;
+  const adminScreenTable = (subscription?.netflixPricing && subscription.netflixPricing.screens) || {};
+  const adminMonthTable = (subscription?.netflixPricing && subscription.netflixPricing.months) || {};
+  const screenTable = { ...DEFAULT_NETFLIX_SCREEN_PRICING, ...adminScreenTable };
+  const monthTable = { ...DEFAULT_NETFLIX_MONTH_PRICING, ...adminMonthTable };
+
+  const screenPrice = screenTable[screenCount] != null
+    ? Number(screenTable[screenCount])
+    : basePrice * screenCount;
+
+  let monthPrice;
+  if (monthTable[totalMonths] != null) {
+    monthPrice = Number(monthTable[totalMonths]);
+  } else if (totalMonths > 12 && Object.keys(monthTable).length) {
+    const enteredMonths = Object.keys(monthTable).map(Number).sort((a, b) => a - b);
+    const last = enteredMonths[enteredMonths.length - 1];
+    const prev = enteredMonths[enteredMonths.length - 2];
+    const step = prev != null ? (Number(monthTable[last]) - Number(monthTable[prev])) / (last - prev) : basePrice;
+    monthPrice = Number(monthTable[last]) + step * (totalMonths - last);
+  } else {
+    monthPrice = basePrice * totalMonths;
+  }
+
+  const blendBase = screenTable[1] != null ? Number(screenTable[1])
+    : (monthTable[1] != null ? Number(monthTable[1]) : basePrice);
+
+  if (!blendBase) return Math.round(screenPrice + monthPrice);
+  return Math.round((screenPrice * monthPrice) / blendBase);
+}
 function isEncrypted(stored) {
   return typeof stored === 'string' && stored.startsWith('enc$');
 }
@@ -1176,9 +1219,15 @@ app.post('/api/subscriptions/:id/accounts/:accountId/screens/:screenId/customers
     const renewMonths = Number(customer.months) || 0;
     const renewDays = renewMonths > 0 ? 0 : (Number(customer.days) || 30);
     const perMonth = Number(sub.sellingPrice) || 0;
-    const amount = renewMonths > 0
-      ? Math.round(perMonth * renewMonths)
-      : Math.round(perMonth * (renewDays / 30));
+    // Netflix's tiered per-screen pricing only has whole-month tiers, so a
+    // days-based renewal (not a fixed number of months) still falls back to
+    // the plain per-month rate — there's no clean tiered equivalent for a
+    // partial month.
+    const amount = sub.type === 'netflix' && renewMonths > 0
+      ? getNetflixPriceServer(sub, customer.screens, renewMonths)
+      : renewMonths > 0
+        ? Math.round(perMonth * renewMonths)
+        : Math.round(perMonth * (renewDays / 30));
     if (!amount || amount <= 0) {
       return res.status(400).json({ error: "This subscription doesn't have a valid renewal price set — contact support." });
     }
@@ -1472,25 +1521,29 @@ app.get('/api/users/:username/credit-history', async (req, res) => {
 // balance.
 app.post('/api/users/:username/deductCredits', async (req, res) => {
   try {
-    let { amount, purchaseId, reason, subscriptionId, months, dealId } = req.body;
+    let { amount, purchaseId, reason, subscriptionId, months, screens, dealId } = req.body;
 
     // For a real purchase, never trust the credit amount the browser sends —
     // always recompute it here from the subscription's (or deal's) actual
     // current price in the database. The client only sends subscriptionId/
-    // months (or dealId) to identify WHAT was bought; the server decides
-    // WHAT IT COSTS. This closes two problems at once: a customer's browser
-    // showing a stale/out-of-date price (e.g. after the admin changes it)
-    // can no longer result in under-charging, and nobody can tamper with
-    // the request to pay less than the real price.
+    // months/screens (or dealId) to identify WHAT was bought; the server
+    // decides WHAT IT COSTS. This closes two problems at once: a customer's
+    // browser showing a stale/out-of-date price (e.g. after the admin
+    // changes it) can no longer result in under-charging, and nobody can
+    // tamper with the request to pay less than the real price.
     // Admin's manual credit adjustments (add/deduct from the Users tab)
     // pass neither subscriptionId nor dealId, so they keep using the raw
     // `amount` exactly as before.
     if (subscriptionId) {
       const sub = await subscriptionsCollection.findOne({ id: subscriptionId });
       if (!sub) return res.status(404).json({ error: 'Subscription not found' });
-      const perMonth = Number(sub.sellingPrice) || 0;
       const totalMonths = Number(months) || 1;
-      amount = Math.round(perMonth * totalMonths);
+      // Netflix is sold by screen count too, with its own bulk-discount
+      // tables (see getNetflixPriceServer) — a plain perMonth × months
+      // rate would silently undercharge anyone buying more than 1 screen.
+      amount = sub.type === 'netflix'
+        ? getNetflixPriceServer(sub, screens, totalMonths)
+        : Math.round((Number(sub.sellingPrice) || 0) * totalMonths);
     } else if (dealId) {
       const deal = await dealsCollection.findOne({ id: dealId });
       if (!deal) return res.status(404).json({ error: 'Deal not found' });
@@ -3069,6 +3122,42 @@ app.get('/api/health', (req, res) => {
 async function cleanupExpiredCustomers() {
   try {
     const todayStr = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+
+    // Before deleting anything: permanently flag any screen that has an
+    // expired customer the admin hasn't handled yet (i.e. no PIN reset
+    // since that customer expired). This has to happen BEFORE the $pull
+    // below, because once that customer record is gone, screenNeedsReset()
+    // on the frontend has nothing left to compute the reminder from. That
+    // used to mean: if the admin didn't open the portal within the hour
+    // between expiry and this cleanup running, the blink reminder would
+    // silently vanish before they ever saw it. needsPinReset survives the
+    // deletion — handleGeneratePin() on the frontend clears it once the
+    // admin actually resets the PIN.
+    const subsWithExpired = await subscriptionsCollection.find({
+      'accounts.screens.customers.expiryDate': { $exists: true, $ne: '', $lt: todayStr }
+    }).toArray();
+
+    for (const sub of subsWithExpired) {
+      let touched = false;
+      for (const acc of (sub.accounts || [])) {
+        for (const screen of (acc.screens || [])) {
+          if (screen.needsPinReset) continue; // already flagged, nothing to do
+          const hasUnhandledExpired = (screen.customers || []).some(c => {
+            if (!c.expiryDate || c.expiryDate >= todayStr) return false;
+            if (screen.pinResetAt && screen.pinResetAt.slice(0, 10) >= c.expiryDate) return false;
+            return true;
+          });
+          if (hasUnhandledExpired) {
+            screen.needsPinReset = true;
+            touched = true;
+          }
+        }
+      }
+      if (touched) {
+        await subscriptionsCollection.updateOne({ _id: sub._id }, { $set: { accounts: sub.accounts } });
+      }
+    }
+
     const result = await subscriptionsCollection.updateMany(
       {},
       {
