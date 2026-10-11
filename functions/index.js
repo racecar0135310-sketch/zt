@@ -647,7 +647,8 @@ function requireSelfOrAdminBody(field = 'username') {
       }
       if (auth.r === 'manager' && target && (
         await managerHasAccess(auth.u, 'customers', 'edit') ||
-        await managerHasAccess(auth.u, 'subscriptions', 'edit')
+        await managerHasAccess(auth.u, 'subscriptions', 'edit') ||
+        await managerHasAccess(auth.u, 'waiting', 'grant')
       )) return next();
       return res.status(403).json({ error: 'You can only allocate a subscription to yourself or use an authorized admin account' });
     } catch (err) {
@@ -1324,7 +1325,8 @@ app.post('/api/subscriptions/:id/allocate', requireSelfOrAdminBody(), async (req
     const auth = getAuth(req);
     const managerMaySeeCreds = auth && auth.r === 'manager' && (
       await managerHasAccess(auth.u, 'customers', 'edit') ||
-      await managerHasAccess(auth.u, 'subscriptions', 'edit')
+      await managerHasAccess(auth.u, 'subscriptions', 'edit') ||
+      await managerHasAccess(auth.u, 'waiting', 'grant')
     );
     const maySeeCreds = !!auth && (auth.r === 'admin' || auth.u === customer.username || managerMaySeeCreds);
 
@@ -1353,7 +1355,8 @@ app.post('/api/subscriptions/:id/allocate', requireSelfOrAdminBody(), async (req
       days: customer.days || 0,
       screens: customer.screens || 1,
       email: customer.email || '',
-      purchasedAt: customer.purchasedAt || new Date().toISOString()
+      purchasedAt: customer.purchasedAt || new Date().toISOString(),
+      sourceWaitingId: customer.sourceWaitingId || null
     };
     const result = await subscriptionsCollection.updateOne(
       { id: req.params.id },
@@ -2708,11 +2711,61 @@ app.post('/api/waiting', rateLimit({ id: 'waiting-create', limit: 10, windowMs: 
 
 app.delete('/api/waiting/:id', requireAccess('waiting', 'delete'), async (req, res) => {
   try {
-    const result = await waitingCollection.deleteOne({ id: req.params.id });
+    const waiting = await waitingCollection.findOne({ id: req.params.id });
+    if (!waiting) return res.status(404).json({ error: 'Waiting entry not found' });
+    if (!waiting.isSocialOrder) {
+      return res.status(409).json({ error: 'Grant credentials before fulfilling this waiting entry' });
+    }
+    const result = await waitingCollection.deleteOne({ id: req.params.id, isSocialOrder: true });
     if (result.deletedCount === 0) {
-      return res.status(404).json({ error: 'Waiting entry not found' });
+      return res.status(409).json({ error: 'Waiting entry changed; refresh and try again' });
     }
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// A subscription waiting entry can only be fulfilled once the credentials
+// have been persisted to the customer's portal. Keeping this verification
+// server-side prevents a UI mistake or failed grant request from deleting
+// the customer's only record of a paid purchase.
+app.post('/api/waiting/:id/fulfill', requireAccess('waiting', 'grant'), async (req, res) => {
+  try {
+    const waiting = await waitingCollection.findOne({ id: req.params.id });
+    if (!waiting) return res.status(404).json({ error: 'Waiting entry not found' });
+    if (waiting.isSocialOrder) {
+      return res.status(400).json({ error: 'Social orders use the social order completion action' });
+    }
+
+    let hasPortalGrant = false;
+    if (waiting.id) {
+      const candidates = waiting.subscriptionId
+        ? await subscriptionsCollection.find({ id: waiting.subscriptionId }).toArray()
+        : await subscriptionsCollection.find({ 'accounts.screens.customers.username': waiting.username }).toArray();
+      hasPortalGrant = candidates.some(sub => (sub.accounts || []).some(account =>
+        (account.screens || []).some(screen => (screen.customers || []).some(customer =>
+          customer.username === waiting.username && (
+            customer.sourceWaitingId === waiting.id ||
+            (!customer.sourceWaitingId && waiting.purchasedAt && customer.purchasedAt === waiting.purchasedAt)
+          )
+        ))
+      ));
+    }
+    if (!hasPortalGrant) {
+      const customGrant = await customGrantsCollection.findOne({
+        username: waiting.username,
+        sourceWaitingId: waiting.id
+      });
+      hasPortalGrant = !!customGrant;
+    }
+    if (!hasPortalGrant) {
+      return res.status(409).json({ error: 'Grant credentials to the customer before fulfilling this waiting entry' });
+    }
+
+    const result = await waitingCollection.deleteOne({ id: waiting.id });
+    if (!result.deletedCount) return res.status(409).json({ error: 'Waiting entry changed; refresh and try again' });
+    res.json({ success: true, id: waiting.id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3054,10 +3107,15 @@ app.post('/api/custom-grants', requireAccess('waiting', 'grant'), async (req, re
   try {
     const {
       username, name, whatsapp, subscriptionName, email, password, notes,
-      months, days, matchedSubscriptionId, costPerMonth, sellingPrice
+      months, days, matchedSubscriptionId, costPerMonth, sellingPrice,
+      purchasedAt, sourceWaitingId
     } = req.body;
     if (!username || !subscriptionName || !subscriptionName.trim()) {
       return res.status(400).json({ error: 'username and subscriptionName are required' });
+    }
+    if (sourceWaitingId) {
+      const existingGrant = await customGrantsCollection.findOne({ sourceWaitingId, username });
+      if (existingGrant) return res.json(existingGrant);
     }
 
     // "Already listed" means: trust that catalog subscription's own
@@ -3096,7 +3154,8 @@ app.post('/api/custom-grants', requireAccess('waiting', 'grant'), async (req, re
       matchedSubscriptionId: matchedSubscriptionId || null,
       costPerMonth: finalCostPerMonth,
       sellingPrice: finalSellingPrice,
-      purchasedAt: now.toISOString(),
+      purchasedAt: purchasedAt || now.toISOString(),
+      sourceWaitingId: sourceWaitingId || null,
       createdAt: now
     };
     await customGrantsCollection.insertOne(entry);

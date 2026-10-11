@@ -1483,7 +1483,19 @@
 
     const removeWaitingCustomer = async (id) => {
       const res = await fetch(`${API_BASE}/api/waiting/${id}`, { method: 'DELETE', headers: authHeaders() });
-      return res.json();
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.error || 'Failed to update waiting list');
+      return result;
+    };
+
+    const fulfillWaitingCustomer = async (id) => {
+      const res = await fetch(`${API_BASE}/api/waiting/${encodeURIComponent(id)}/fulfill`, {
+        method: 'POST',
+        headers: authHeaders()
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.error || 'Grant credentials before fulfilling this purchase');
+      return result;
     };
 
     // A customer's own still-pending purchases (paid for, but no account
@@ -1566,7 +1578,8 @@
       months: w.months || 0,
       email: w.email || '',
       isPending: true,
-      purchasedAt: w.purchasedAt || null
+      subscriptionId: w.subscriptionId || null,
+      purchasedAt: w.purchasedAt || w.createdAt || null
     }));
 
     // ─── HELP / FAQ ───────────────────────────────────────────
@@ -5972,6 +5985,7 @@
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                                   <div className="detail-row"><span className="label">Screens</span><span className="value">{entry.screens}</span></div>
                                   <div className="detail-row"><span className="label">Duration</span><span className="value">{entry.months ? entry.months + ' months' : entry.days + ' days'}</span></div>
+                                    {entry.purchasedAt && <div className="detail-row"><span className="label">Purchased on</span><span className="value">{new Date(entry.purchasedAt).toLocaleDateString()}</span></div>}
                                   <div className="detail-row"><span className="label">Expiry</span><span className="value text-yellow-400">{entry.expiryDate}</span></div>
                                   <div className="detail-row"><span className="label">Account Email</span>
                                     <span className="value">{entry.accountEmail}
@@ -7209,6 +7223,7 @@
       const [showCredPassword, setShowCredPassword] = useState(false);
       const [credsLoading, setCredsLoading] = useState(false);
       const [grantModalUser, setGrantModalUser] = useState(null);
+      const [grantWaitingEntry, setGrantWaitingEntry] = useState(null);
       const [grantForm, setGrantForm] = useState({ subscriptionId: '', name: '', whatsapp: '', screens: 1, sameAccount: false, durationType: 'months', months: 1, days: 30 });
       const [grantLoading, setGrantLoading] = useState(false);
       // "Custom" grant mode: manually fulfilling a subscription that isn't
@@ -8237,14 +8252,36 @@
       };
       const closeUserSubsModal = () => setViewingUserSubs(null);
 
-      const openGrantModal = (u) => {
+      const openGrantModal = (u, waitingEntry = null) => {
+        const waitingSub = waitingEntry?.subscriptionId
+          ? subscriptions.find(s => s.id === waitingEntry.subscriptionId)
+          : null;
+        setGrantWaitingEntry(waitingEntry);
         setGrantModalUser(u.username);
-        setGrantForm({ subscriptionId: subscriptions[0]?.id || '', name: '', whatsapp: u.whatsapp || '', screens: 1, durationType: 'months', months: 1, days: 30 });
+        setGrantForm({
+          subscriptionId: waitingSub?.id || subscriptions[0]?.id || '',
+          name: u.name || waitingEntry?.name || '',
+          whatsapp: u.whatsapp || waitingEntry?.whatsapp || '',
+          screens: 1,
+          sameAccount: false,
+          durationType: waitingEntry?.months ? 'months' : 'days',
+          months: Number(waitingEntry?.months) || 1,
+          days: Number(waitingEntry?.days) || 30
+        });
         setGrantMode('catalog');
-        setCustomGrantForm({ subscriptionName: '', email: '', password: '', notes: '', matchedSubscriptionId: '', costPerMonth: '', sellingPrice: '' });
+        setCustomGrantForm({
+          subscriptionName: waitingEntry?.subscriptionName || '',
+          email: '',
+          password: '',
+          notes: '',
+          matchedSubscriptionId: waitingSub?.id || '',
+          costPerMonth: '',
+          sellingPrice: ''
+        });
       };
       const closeGrantModal = () => {
         setGrantModalUser(null);
+        setGrantWaitingEntry(null);
         setGrantForm({ subscriptionId: '', name: '', whatsapp: '', screens: 1, sameAccount: false, durationType: 'months', months: 1, days: 30 });
         setGrantMode('catalog');
         setCustomGrantForm({ subscriptionName: '', email: '', password: '', notes: '', matchedSubscriptionId: '', costPerMonth: '', sellingPrice: '' });
@@ -8260,6 +8297,7 @@
         if (!grantForm.whatsapp.trim()) { addToast('WhatsApp number is required', 'error'); return; }
 
         setGrantLoading(true);
+        let portalGrantSaved = false;
         try {
           let allocations = [];
           if (sub.type === 'netflix') {
@@ -8300,21 +8338,35 @@
             months: grantForm.durationType === 'months' ? (grantForm.months || 1) : 0,
             days: totalDays,
             screens: grantForm.screens || 1,
-            email: '',
-            purchasedAt: now.toISOString()
+            email: grantWaitingEntry?.email || '',
+            purchasedAt: grantWaitingEntry?.purchasedAt || grantWaitingEntry?.createdAt || now.toISOString(),
+            sourceWaitingId: grantWaitingEntry?.id || null
           };
 
-          const grantPurchaseId = genPurchaseId();
+          const grantPurchaseId = grantWaitingEntry
+            ? (grantWaitingEntry.purchaseId || `waiting-grant:${grantWaitingEntry.id}`)
+            : genPurchaseId();
           for (const slot of allocations) {
             await allocateCustomer(sub.id, slot.account.id, slot.screen.id, customerPayload, grantPurchaseId);
+            portalGrantSaved = true;
+          }
+
+          if (grantWaitingEntry) {
+            await fulfillWaitingCustomer(grantWaitingEntry.id);
+            setWaitingList(prev => prev.filter(entry => entry.id !== grantWaitingEntry.id));
           }
 
           refreshData(true); // background sync — the action above already saved and its own toast already fired
-          addToast(`Subscription granted to ${grantModalUser}.`, 'success');
+          addToast(grantWaitingEntry ? `Credentials granted and waiting purchase fulfilled for ${grantModalUser}.` : `Subscription granted to ${grantModalUser}.`, 'success');
           closeGrantModal();
         } catch (err) {
           console.error(err);
-          addToast(err.message || 'Failed to grant subscription', 'error');
+          addToast(
+            grantWaitingEntry && portalGrantSaved
+              ? `Credentials were saved, but the waiting entry remains. Retry Grant & Fulfill to finish safely: ${err.message || 'request failed'}`
+              : (err.message || 'Failed to grant subscription'),
+            'error'
+          );
         } finally {
           setGrantLoading(false);
         }
@@ -8336,6 +8388,7 @@
         }
 
         setGrantLoading(true);
+        let portalGrantSaved = false;
         try {
           await createCustomGrant({
             username: grantModalUser,
@@ -8349,14 +8402,26 @@
             days: grantForm.durationType === 'days' ? (grantForm.days || 30) : undefined,
             matchedSubscriptionId: customGrantForm.matchedSubscriptionId || null,
             costPerMonth: customGrantForm.costPerMonth,
-            sellingPrice: customGrantForm.sellingPrice
+            sellingPrice: customGrantForm.sellingPrice,
+            purchasedAt: grantWaitingEntry?.purchasedAt || grantWaitingEntry?.createdAt || undefined,
+            sourceWaitingId: grantWaitingEntry?.id || null
           });
-          addToast(`Custom subscription granted to ${grantModalUser}.`, 'success');
+          portalGrantSaved = true;
+          if (grantWaitingEntry) {
+            await fulfillWaitingCustomer(grantWaitingEntry.id);
+            setWaitingList(prev => prev.filter(entry => entry.id !== grantWaitingEntry.id));
+          }
+          addToast(grantWaitingEntry ? `Credentials granted and waiting purchase fulfilled for ${grantModalUser}.` : `Custom subscription granted to ${grantModalUser}.`, 'success');
           closeGrantModal();
           loadCustomGrants();
         } catch (err) {
           console.error(err);
-          addToast(err.message || 'Failed to grant custom subscription', 'error');
+          addToast(
+            grantWaitingEntry && portalGrantSaved
+              ? `Credentials were saved, but the waiting entry remains. Retry Grant & Fulfill to finish safely: ${err.message || 'request failed'}`
+              : (err.message || 'Failed to grant custom subscription'),
+            'error'
+          );
         } finally {
           setGrantLoading(false);
         }
@@ -10011,7 +10076,11 @@
                         </td>
                         <td className="text-xs text-white/40">{w.purchasedAt ? new Date(w.purchasedAt).toLocaleDateString() : 'N/A'}</td>
                         <td>
-                          {can('waiting', 'delete') && <button onClick={() => handleFulfillWaiting(w.id)} className="btn-neon-outline text-xs py-1 px-2"><i className="fas fa-check mr-1"></i> Mark Fulfilled</button>}
+                          {w.isSocialOrder ? (
+                            can('waiting', 'delete') && <button onClick={() => handleFulfillWaiting(w.id)} className="btn-neon-outline text-xs py-1 px-2"><i className="fas fa-check mr-1"></i> Mark Fulfilled</button>
+                          ) : (
+                            can('waiting', 'grant') && <button onClick={() => openGrantModal({ username: w.username, name: w.name, whatsapp: w.whatsapp }, w)} className="btn-neon text-xs py-1 px-2"><i className="fas fa-key mr-1"></i> Grant &amp; Fulfill</button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -11329,10 +11398,14 @@
           if (userRef.current && flowStepRef.current === 'customer-dash') {
             const freshSubEntries = findCustomers(userRef.current.username, subs);
             Promise.all([
-              fetchCustomGrants(userRef.current.username).catch(() => []),
-              fetchMyWaiting(userRef.current.username).catch(() => [])
+              fetchCustomGrants(userRef.current.username).catch(() => null),
+              fetchMyWaiting(userRef.current.username).catch(() => null)
             ])
-              .then(([grants, waiting]) => setCustomerData([...mapWaitingToEntries(waiting), ...freshSubEntries, ...mapCustomGrantsToEntries(grants)]))
+              .then(([grants, waiting]) => setCustomerData(prev => [
+                ...(waiting ? mapWaitingToEntries(waiting) : (prev || []).filter(entry => entry.isPending)),
+                ...freshSubEntries,
+                ...(grants ? mapCustomGrantsToEntries(grants) : (prev || []).filter(entry => entry.isCustom))
+              ]))
               .catch(() => {
                 // Fetch failed — still update the subscription-based part,
                 // keeping whatever custom-grant/pending entries were
@@ -11566,6 +11639,7 @@
           });
         }
 
+        let waitingSaveFailed = false;
         try {
           const allocations = (data.allocated && data.allocated.length > 0) ? data.allocated : [];
 
@@ -11645,7 +11719,12 @@
               return await addWaitingCustomer(payload);
             } catch (err) {
               console.error('Waiting-list save failed, retrying once:', err);
-              return await addWaitingCustomer(payload);
+              try {
+                return await addWaitingCustomer(payload);
+              } catch (retryError) {
+                waitingSaveFailed = true;
+                throw retryError;
+              }
             }
           }));
 
@@ -11705,7 +11784,11 @@
           ]).catch(err => console.error('Background refresh after purchase failed:', err));
         } catch (err) {
           console.error('Failed to save subscription:', err);
-          addToast('Payment went through but saving your subscription failed. Please contact support so we can fix this manually.', 'error');
+          if (waitingSaveFailed) {
+            addToast(`Payment went through, but we couldn't record your waiting order. Please message us on WhatsApp: ${ADMIN_WHATSAPP}`, 'error');
+          } else {
+            addToast('Payment went through but saving your subscription failed. Please contact support so we can fix this manually.', 'error');
+          }
           const fresh = await fetchSubscriptions().catch(() => null);
           if (fresh) setSubscriptions(fresh);
         }
@@ -11839,7 +11922,7 @@
           // have to stare at a frozen screen (and click again wondering if
           // it registered) just waiting on a network round trip to see
           // their own portal.
-          setCustomerData(findCustomers(user.username));
+          setCustomerData(prev => prev && prev.length > 0 ? prev : findCustomers(user.username));
           setFlowStep('customer-dash');
 
           // Then quietly catch up in the background, in case a purchase
@@ -11854,12 +11937,16 @@
           Promise.all([
             refreshUser().catch(err => { console.error('Background user refresh failed:', err); return null; }),
             fetchSubscriptions().catch(err => { console.error('Background subscriptions refresh failed:', err); return null; }),
-            fetchCustomGrants(user.username).catch(() => []),
-            fetchMyWaiting(user.username).catch(() => [])
+            fetchCustomGrants(user.username).catch(() => null),
+            fetchMyWaiting(user.username).catch(() => null)
           ])
             .then(([, fresh, grants, waiting]) => {
               if (fresh) setSubscriptions(fresh);
-              setCustomerData([...mapWaitingToEntries(waiting), ...findCustomers(user.username, fresh), ...mapCustomGrantsToEntries(grants)]);
+              setCustomerData(prev => [
+                ...(waiting ? mapWaitingToEntries(waiting) : (prev || []).filter(entry => entry.isPending)),
+                ...findCustomers(user.username, fresh || subscriptions),
+                ...(grants ? mapCustomGrantsToEntries(grants) : (prev || []).filter(entry => entry.isCustom))
+              ]);
             })
             .catch(err => console.error('Background customer portal refresh failed:', err));
         } else {
